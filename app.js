@@ -152,25 +152,45 @@ async function submitInscricao() {
 
   showLoading(true);
 
-  // Upload da foto se selecionada
-  let fotoBase64 = '';
-  const fotoFile = document.getElementById('iFoto').files[0];
-  if (fotoFile) {
-    fotoBase64 = await fileToBase64(fotoFile);
-  }
-
+  // Passo 1: salvar inscrição (sem foto — JSONP não suporta base64 grande na URL)
   const res = await api('submitInscricao', {
     nome, eklesia,
     whatsapp: whats,
     instrumentos: instrs,
     obs,
-    fotoBase64: fotoBase64 ? fotoBase64.split(',')[1] : '',
-    fotoNome: fotoFile ? `foto_${nome.replace(/\s/g,'_')}_${Date.now()}.jpg` : '',
   });
 
-  showLoading(false);
+  if (!res.ok) {
+    showLoading(false);
+    showToast(res.error || 'Erro ao enviar', 'error');
+    return;
+  }
 
-  if (!res.ok) { showToast(res.error || 'Erro ao enviar', 'error'); return; }
+  const inscricaoId = res.id;
+
+  // Passo 2: upload da foto via fetch POST separado (não usa JSONP)
+  const fotoFile = document.getElementById('iFoto').files[0];
+  if (fotoFile && inscricaoId) {
+    try {
+      const fotoBase64 = await fileToBase64(fotoFile);
+      const url = atob(_e);
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        mode: 'no-cors',
+        body: JSON.stringify({
+          action: 'uploadFotoInscricao',
+          inscricaoId,
+          fotoBase64: fotoBase64.split(',')[1],
+          fotoNome: 'foto_' + nome.replace(/\s+/g, '_') + '_' + Date.now() + '.jpg',
+        }),
+      });
+    } catch(e) {
+      console.warn('Foto não enviada:', e);
+    }
+  }
+
+  showLoading(false);
 
   document.querySelector('#screenInscricao .pub-wrap').innerHTML = `
     <div class="empty" style="padding:80px 24px">
