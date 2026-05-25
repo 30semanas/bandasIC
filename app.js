@@ -949,56 +949,91 @@ function filterInsc(f, el) {
 }
 
 function renderAdmInscricoes() {
-  let list = _inscFilter === 'todos' ? [..._inscAll] : _inscAll.filter(i => (i.Status||i.status) === _inscFilter);
-  list.sort((a,b) => (a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
+  let list = _inscFilter === 'todos' ? [..._inscAll] : _inscAll.filter(i => i.Status === _inscFilter);
+  list.sort((a,b) => (a.Nome||'').localeCompare(b.Nome||''));
   const el = document.getElementById('admInscricoesList');
   if (!list.length) { el.innerHTML = emptyState('🎙','Nenhuma inscrição'); return; }
-  el.innerHTML = list.map(i => `
-    <div class="card" onclick="openDetailInscricao('${i.Id}')">
+  el.innerHTML = list.map(i => {
+    const iid   = i.Id || '';
+    const nome  = i.Nome  || '—';
+    const ekl   = i.Eklesia || '—';
+    const wa    = String(i.WhatsApp || '');
+    const instr = i.Instrumentos || '';
+    const st    = i.Status || 'pendente';
+    const dataI = i.DataInscricao || '';
+    const notif = i.Notificado || 'nao';
+    return `
+    <div class="card" onclick="openDetailInscricao('${iid}')" style="cursor:pointer">
       <div class="card-head">
-        <div class="avatar">${(i.Nome||'?')[0]}</div>
-        <div>
-          <div class="card-name">${i.Nome}</div>
-          <div class="card-sub">${i.Eklesia} • 📱 ${i.WhatsApp}</div>
+        <div class="avatar">${nome[0]||'?'}</div>
+        <div style="flex:1">
+          <div class="card-name">${nome}</div>
+          <div class="card-sub">${ekl} • 📱 ${wa||'—'}</div>
         </div>
-        ${badgeStatus(i.Status)}
+        ${badgeStatus(st)}
       </div>
-      <div class="itags">${(i.Instrumentos||'').split(',').map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
+      <div class="itags">${instr.split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
       <div class="card-foot">
-        <span style="font-size:12px;color:var(--text3)">${fmtDate(i.DataInscricao)}</span>
-        <a class="btn-whats" href="${waLink(i.WhatsApp,'')}" target="_blank" onclick="event.stopPropagation()">💬</a>
+        <span style="font-size:12px;color:var(--text3)">${fmtDate(dataI)} ${notif==='sim'?'• ✅':''}</span>
+        <a class="btn-whats" href="${waLink(wa,'')}" target="_blank" onclick="event.stopPropagation()">💬</a>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function openDetailInscricao(id) {
-  const i = _inscAll.find(x => x.Id === id);
-  if (!i) return;
-  const waAud = `Olá, ${i.Nome}! Sua audição para ${i.Instrumentos} foi agendada:%0A%0A📅 Data: [DATA]%0A⏰ Horário: [HORÁRIO]%0A📍 Local: [LOCAL]%0A%0ANos vemos lá! 🎵`;
-  document.getElementById('detailTitle').textContent = i.Nome;
+  const i = _inscAll.find(x => String(x.Id) === String(id));
+  if (!i) { showToast('Inscrição não encontrada', 'error'); return; }
+
+  const nome     = i.Nome || '—';
+  const eklesia  = i.Eklesia || '—';
+  const whats    = String(i.WhatsApp || '');
+  const instrs   = i.Instrumentos || '—';
+  const status   = i.Status || 'pendente';
+  const obs      = i.Observacoes || '';
+  const dataInsc = i.DataInscricao || '';
+  const dataAud  = i.DataAudicao || '';
+  const horario  = i.Horario || '';
+  const local    = i.Local || '';
+  const notif    = i.Notificado || 'nao';
+  const dataNotif= i.DataNotificacao || '';
+  const fotoUrl  = i.FotoUrl || '';
+
+  const waMsg = encodeURIComponent('Olá, ' + nome + '! Sua audição para ' + instrs + ' foi agendada:\n\n📅 Data: ' + fmtDate(dataAud) + '\n⏰ Horário: ' + horario + '\n📍 Local: ' + local + '\n\nNos vemos lá! 🎵');
+
+  document.getElementById('detailTitle').textContent = nome;
   document.getElementById('detailBody').innerHTML = `
+    ${fotoUrl ? `<div style="text-align:center;margin-bottom:16px"><img src="${fotoUrl}" style="width:80px;height:80px;border-radius:50%;object-fit:cover"/></div>` : ''}
     <div class="info-grid">
-      <div class="info-item"><label>Nome</label><span>${i.Nome}</span></div>
-      <div class="info-item"><label>Eklesia</label><span>${i.Eklesia}</span></div>
-      <div class="info-item"><label>WhatsApp</label><span>${i.WhatsApp}</span></div>
-      <div class="info-item"><label>Status</label><span>${badgeStatus(i.Status)}</span></div>
-      <div class="info-item"><label>Instrumentos</label><span>${i.Instrumentos}</span></div>
-      <div class="info-item"><label>Inscrição</label><span>${fmtDate(i.DataInscricao)}</span></div>
-      ${i.DataAudicao ? `<div class="info-item"><label>Data audição</label><span>${fmtDate(i.DataAudicao)}</span></div>` : ''}
-      ${i.Horario ? `<div class="info-item"><label>Horário</label><span>${i.Horario}</span></div>` : ''}
-      ${i.Local ? `<div class="info-item"><label>Local</label><span>${i.Local}</span></div>` : ''}
+      <div class="info-item"><label>Nome</label><span>${nome}</span></div>
+      <div class="info-item"><label>Eklesia</label><span>${eklesia}</span></div>
+      <div class="info-item"><label>WhatsApp</label><span>${whats||'—'}</span></div>
+      <div class="info-item"><label>Status</label><span>${badgeStatus(status)}</span></div>
+      <div class="info-item"><label>Instrumentos</label><span>${instrs}</span></div>
+      <div class="info-item"><label>Inscrição</label><span>${fmtDate(dataInsc)}</span></div>
+      ${dataAud ? `<div class="info-item"><label>Data audição</label><span>${fmtDate(dataAud)}</span></div>` : ''}
+      ${horario  ? `<div class="info-item"><label>Horário</label><span>${horario}</span></div>` : ''}
+      ${local    ? `<div class="info-item"><label>Local</label><span>${local}</span></div>` : ''}
+      <div class="info-item"><label>Notificado</label><span>${notif==='sim' ? '✅ Sim — '+fmtDate(dataNotif) : '⏳ Não'}</span></div>
     </div>
-    ${i.Observacoes ? `<div class="detail-section"><h3>Observações</h3><p style="font-size:13px;color:var(--text2)">${i.Observacoes}</p></div>` : ''}
+    ${obs ? `<div class="detail-section"><h3>Observações</h3><p style="font-size:13px;color:var(--text2)">${obs}</p></div>` : ''}
     <div class="detail-section">
       <h3>Ações</h3>
       <div class="action-row">
-        ${i.Status === 'pendente' ? `<button class="btn-primary sm" onclick="openModalAgendar('${i.Id}')">📅 Agendar audição</button>` : ''}
-        ${i.Status === 'agendada' ? `
-          <button class="btn-green" onclick="aprovarInscricao('${i.Id}','aprovado')">✅ Aprovar</button>
-          <button class="btn-red" onclick="aprovarInscricao('${i.Id}','reprovado')">❌ Reprovar</button>` : ''}
-        <a class="btn-whats" href="${waLink(i.WhatsApp, i.Status==='agendada' ? waAud : `Olá, ${i.Nome}!`)}" target="_blank">💬 WhatsApp</a>
+        ${status==='pendente' ? `<button class="btn-primary sm" onclick="openModalAgendar('${id}')">📅 Agendar audição</button>` : ''}
+        ${status==='agendada' ? `
+          <button class="btn-green" onclick="confirmarAprovacao('${id}','aprovado','${nome.replace(/'/g,'')}')">✅ Aprovar</button>
+          <button class="btn-red"   onclick="confirmarAprovacao('${id}','reprovado','${nome.replace(/'/g,'')}')">❌ Reprovar</button>
+          <button class="btn-whats" onclick="notificarCandidato('${id}','${whats}','${waMsg}')">💬 Notificar</button>
+        ` : `<a class="btn-whats" href="${waLink(whats,'')}" target="_blank">💬 WhatsApp</a>`}
       </div>
-    </div>`;
+    </div>
+    ${status==='aprovado' ? `
+    <div class="detail-section">
+      <h3>Promover a líder</h3>
+      <button class="btn-ghost sm" onclick="openModalPromoverLiderDireto('','${nome.replace(/'/g,'')}')">⭐ Promover a líder</button>
+    </div>` : ''}
+  `;
   openDetail();
 }
 
@@ -1052,21 +1087,19 @@ async function openDetailMusico(id) {
   showLoading(true);
   const [resMusicos, resTokens] = await Promise.all([api('getMusicos'), api('getTokens')]);
   showLoading(false);
-
-  const list = resMusicos.ok ? resMusicos.data : [];
-  const m = list.find(x => String(field(x,'Id','id')) === String(id));
+  const list   = resMusicos.ok ? resMusicos.data : [];
+  const tokens = resTokens.ok  ? resTokens.data  : [];
+  const m = list.find(x => String(x.Id) === String(id));
   if (!m) { showToast('Músico não encontrado', 'error'); return; }
 
-  const tokens = resTokens.ok ? resTokens.data : [];
-  const tokenExistente = tokens.find(t => String(t.MusicoId||t.musicoId) === String(id));
-
-  const nome  = field(m,'Nome','nome') || '—';
-  const ekl   = (field(m,'Eklesia','eklesia')||'').replace('undefined','') || '—';
-  const wa    = (field(m,'WhatsApp','whatsapp','Whatsapp')||'').replace('undefined','') || '';
-  const instr = field(m,'Instrumentos','instrumentos') || '';
-  const banda = field(m,'Banda','banda') || 'Sem banda';
-  const lider = field(m,'IsLider','isLider','islider') === 'sim';
-  const fotoUrl = field(m,'FotoUrl','fotoUrl','fotourl') || '';
+  const nome    = m.Nome  || '—';
+  const ekl     = m.Eklesia || '—';
+  const wa      = String(m.WhatsApp || '');
+  const instr   = m.Instrumentos || '';
+  const banda   = m.Banda || 'Sem banda';
+  const lider   = m.IsLider === 'sim';
+  const fotoUrl = m.FotoUrl || '';
+  const tokenEx = tokens.find(t => String(t.MusicoId) === String(id));
 
   document.getElementById('detailTitle').textContent = nome;
   document.getElementById('detailBody').innerHTML = `
@@ -1078,43 +1111,38 @@ async function openDetailMusico(id) {
       <h2 style="font-family:var(--fhead);font-size:20px;font-weight:800">${nome}</h2>
       <p style="color:var(--text2);font-size:13px">${ekl}</p>
     </div>
-
     <div class="info-grid">
       <div class="info-item"><label>WhatsApp</label><span>${wa||'—'}</span></div>
       <div class="info-item"><label>Instrumentos</label><span>${instr||'—'}</span></div>
       <div class="info-item"><label>Banda</label><span>${banda}</span></div>
       <div class="info-item"><label>Perfil</label><span>${lider ? '<span class="role-tag">Líder</span>' : '<span class="role-tag" style="background:rgba(52,211,153,.2);color:var(--green)">Voluntário</span>'}</span></div>
     </div>
-
     <div class="detail-section">
-      <h3>Perfil de acesso</h3>
-      ${tokenExistente ? `
+      <h3>Token de acesso</h3>
+      ${tokenEx ? `
         <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
-          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">TOKEN GERADO</div>
-          <div style="font-family:monospace;font-size:16px;font-weight:700;color:var(--accent2);letter-spacing:1px">${tokenExistente.Token||tokenExistente.token}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokenExistente.Nivel||tokenExistente.nivel} • Token imutável</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
+          <div style="font-family:monospace;font-size:18px;font-weight:700;color:var(--accent2);letter-spacing:2px">${tokenEx.Token||''}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokenEx.Nivel||''} • Imutável</div>
         </div>
-        <a class="btn-whats" href="${waLink(wa, 'Seu token de acesso ao sistema Bandas IC: *' + (tokenExistente.Token||tokenExistente.token) + '*%0AAcesse: https://30semanas.github.io/bandasIC')}" target="_blank">💬 Enviar token por WhatsApp</a>
+        <a class="btn-whats" href="${waLink(wa,'Seu token de acesso ao Bandas IC: *'+(tokenEx.Token||'')+'*%0AAcesse: https://30semanas.github.io/bandasIC')}" target="_blank">💬 Enviar token</a>
       ` : `
-        <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Este músico ainda não tem token de acesso. Defina o perfil e gere agora:</p>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Sem token. Defina o perfil e gere:</p>
         <div class="form-group" style="margin-bottom:12px">
-          <label>Perfil de acesso</label>
+          <label>Perfil</label>
           <select id="musicoNivel">
             <option value="voluntario">🎵 Voluntário</option>
-            ${lider ? '<option value="lider" selected>🎸 Líder de Banda</option>' : '<option value="lider">🎸 Líder de Banda</option>'}
+            ${lider ? '<option value="lider" selected>🎸 Líder</option>' : '<option value="lider">🎸 Líder</option>'}
           </select>
         </div>
-        <button class="btn-primary sm" onclick="gerarTokenMusico('${id}','${nome}','${ekl}','${wa}')">🔑 Gerar token agora</button>
+        <button class="btn-primary sm" onclick="gerarTokenMusico('${id}','${nome.replace(/'/g,'')}','${ekl.replace(/'/g,'')}','${wa}')">🔑 Gerar token</button>
       `}
     </div>
-
     ${!lider ? `
     <div class="detail-section">
       <h3>Promover a líder</h3>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Isso permitirá que ele gerencie bandas.</p>
-      <button class="btn-ghost sm" onclick="openModalPromoverLiderDireto('${id}','${nome}')">⭐ Promover a líder</button>
+      <button class="btn-ghost sm" onclick="openModalPromoverLiderDireto('${id}','${nome.replace(/'/g,'')}')">⭐ Promover a líder de banda</button>
     </div>` : ''}
-
     <div class="detail-section">
       <h3>Contato</h3>
       <a class="btn-whats" href="${waLink(wa,'')}" target="_blank">💬 Abrir WhatsApp</a>
@@ -1171,27 +1199,34 @@ async function loadAdmMusicos() {
   _admMusicosList_data = list;
   const el = document.getElementById('admMusicosList');
   if (!list.length) { el.innerHTML = emptyState('👥','Nenhum músico cadastrado'); return; }
-  list.sort((a,b)=>(a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
-  el.innerHTML = list.map(m => `
-    <div class="card">
+  list.sort((a,b) => (a.Nome||'').localeCompare(b.Nome||''));
+  el.innerHTML = list.map(m => {
+    const mid   = String(m.Id || '');
+    const nome  = m.Nome  || '—';
+    const ekl   = m.Eklesia || '—';
+    const wa    = String(m.WhatsApp || '');
+    const instr = m.Instrumentos || '';
+    const banda = m.Banda || 'Sem banda';
+    const lider = m.IsLider === 'sim';
+    return `
+    <div class="card" onclick="openDetailMusico('${mid}')" style="cursor:pointer">
       <div class="card-head">
-        <div class="avatar">${(m.Nome||m.nome||'?')[0]}</div>
-        <div>
-          <div class="card-name">${m.Nome}</div>
-          <div class="card-sub">${m.Eklesia} • 📱 ${m.WhatsApp}</div>
+        <div class="avatar">${nome[0]||'?'}</div>
+        <div style="flex:1">
+          <div class="card-name">${nome} ${lider ? '<span class="role-tag">Líder</span>' : ''}</div>
+          <div class="card-sub">${ekl} • 📱 ${wa||'—'}</div>
         </div>
         <span class="badge badge-aprov">ativo</span>
       </div>
-      <div class="itags">${(m.Instrumentos||'').split(',').map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
+      <div class="itags">${instr.split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
       <div class="card-foot">
-        <span style="font-size:12px;color:var(--text3)">${m.Banda||'Sem banda'}</span>
-        <a class="btn-whats" href="${waLink(m.WhatsApp,'')}" target="_blank">💬</a>
+        <span style="font-size:12px;color:var(--text3)">${banda}</span>
+        <a class="btn-whats" href="${waLink(wa,'')}" target="_blank" onclick="event.stopPropagation()">💬</a>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
-// BANDAS
-let _admBandas = [];
 async function loadAdmBandas() {
   showLoading(true);
   const res = await api('getBandas');
