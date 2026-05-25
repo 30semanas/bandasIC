@@ -619,50 +619,102 @@ async function loadMusicos(){
 
 async function detMusico(id){
   load(true);
-  const [rT]=await Promise.all([api('getTokens')]);
+  const [rT] = await Promise.all([api('getTokens')]);
   load(false);
-  const m=_aMusicos.find(x=>x.Id===id); if(!m){toast('Não encontrado','err');return;}
-  const nome=m.Nome||'—', ekl=m.Eklesia||'—', whats=String(m.WhatsApp||'');
-  const instr=m.Instrumentos||'', banda=m.Banda||'Sem banda', lider=m.IsLider==='sim';
-  const foto=m.FotoUrl||'';
-  const toks=rT.ok?rT.data:[];
-  const tokEx=toks.find(t=>t.MusicoId===id);
-  document.getElementById('dTitle').textContent=nome;
-  document.getElementById('dBody').innerHTML=`
+  const m = _aMusicos.find(x => x.Id === id);
+  if (!m) { toast('Não encontrado','err'); return; }
+
+  const nome  = m.Nome  || '—';
+  const ekl   = m.Eklesia || '';
+  const whats = String(m.WhatsApp || '');
+  const instr = m.Instrumentos || '';
+  const banda = m.Banda || '';
+  const lider = m.IsLider === 'sim';
+  const foto  = m.FotoUrl || '';
+  const toks  = rT.ok ? rT.data : [];
+  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
+  const tokStr = tokEx ? (tokEx.Token || '') : '';
+  const tokNiv = tokEx ? (tokEx.Nivel || '') : '';
+  const waNum = whats.replace(/\D/g,'');
+  const msgToken = 'Olá, ' + nome + '! 🎵%0A%0ASeu token de acesso ao sistema *Bandas IC*:%0A%0A🔑 *' + tokStr + '*%0A%0AAcesse: https://30semanas.github.io/bandasIC%0A%0AEscolha *' + (tokNiv === 'lider' ? 'Líder de Banda' : 'Voluntário') + '* na tela inicial.';
+
+  document.getElementById('dTitle').textContent = nome;
+  document.getElementById('dBody').innerHTML = `
     <div style="text-align:center;margin-bottom:20px">
-      ${foto?`<img src="${foto}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:10px"/>`:
-      `<div class="av lg" style="margin:0 auto 10px">${nome[0]||'?'}</div>`}
+      ${foto ? `<img src="${foto}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:10px"/>` : `<div class="av lg" style="margin:0 auto 10px">${nome[0]||'?'}</div>`}
       <h2 style="font-family:var(--fh);font-size:20px;font-weight:800">${nome}</h2>
-      <p style="color:var(--text2);font-size:13px">${ekl}</p>
+      <p style="color:var(--text2);font-size:13px">${ekl||'—'}</p>
     </div>
-    <div class="igrid">
-      <div class="ii"><label>WhatsApp</label><span>${whats||'—'}</span></div>
-      <div class="ii"><label>Instrumentos</label><span>${instr||'—'}</span></div>
-      <div class="ii"><label>Banda</label><span>${banda}</span></div>
-      <div class="ii"><label>Perfil</label><span>${lider?'<span class="rtag">Líder</span>':'<span class="rtag" style="background:rgba(52,211,153,.2);color:var(--green)">Voluntário</span>'}</span></div>
-    </div>
-    <div class="dsec"><h3>Token de acesso</h3>
-      ${tokEx?`
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
-          <div style="font-family:monospace;font-size:18px;font-weight:700;color:var(--accent2);letter-spacing:2px">${tokEx.Token||''}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokEx.Nivel||''} • Imutável</div>
-        </div>
-        <a class="btn-wa" href="${wa(whats,'Seu token de acesso ao Bandas IC: *'+(tokEx.Token||'')+'*%0AAcesse: https://30semanas.github.io/bandasIC')}" target="_blank">💬 Enviar token</a>
-      `:`
-        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Sem token. Defina o perfil e gere:</p>
-        <div class="fg" style="margin-bottom:12px"><label>Perfil</label>
-          <select id="mNivel">
-            <option value="voluntario">🎵 Voluntário</option>
-            ${lider?'<option value="lider" selected>🎸 Líder</option>':'<option value="lider">🎸 Líder</option>'}
+    <div class="dsec">
+      <h3>Dados do músico</h3>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="fg"><label>Nome</label><input type="text" id="edNome" value="${nome==='—'?'':nome}"/></div>
+        <div class="fg"><label>Eklesia</label><input type="text" id="edEkl" value="${ekl}"/></div>
+        <div class="fg"><label>WhatsApp</label><input type="text" id="edWa" value="${whats}"/></div>
+        <div class="fg"><label>Instrumentos</label><input type="text" id="edInstr" value="${instr}" placeholder="Voz, Guitarra..."/></div>
+        <div class="fg"><label>Banda</label><input type="text" id="edBanda" value="${banda}" placeholder="Nome da banda"/></div>
+        <div class="fg"><label>Perfil de acesso</label>
+          <select id="edNivel">
+            <option value="voluntario" ${!lider?'selected':''}>🎵 Voluntário</option>
+            <option value="lider" ${lider?'selected':''}>🎸 Líder de Banda</option>
           </select>
         </div>
-        <button class="btn-primary sm" onclick="gerarTokMusico('${id}','${nome.replace(/'/g,'')}','${ekl.replace(/'/g,'')}','${whats}')">🔑 Gerar token</button>
-      `}
+        <button class="btn-primary sm" onclick="salvarEdMusico('${id}')">💾 Salvar alterações</button>
+      </div>
     </div>
-    ${!lider?`<div class="dsec"><h3>Promover a líder</h3><button class="btn-ghost sm" onclick="confPromLid('${id}','${nome.replace(/'/g,'')}')">⭐ Promover a líder</button></div>`:''}
-    <div class="dsec"><h3>Contato</h3><a class="btn-wa" href="${wa(whats,'')}" target="_blank">💬 Abrir WhatsApp</a></div>`;
+    <div class="dsec">
+      <h3>Token de acesso</h3>
+      ${tokEx ? `
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
+          <div style="font-family:monospace;font-size:18px;font-weight:700;color:var(--accent2);letter-spacing:2px">${tokStr}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokNiv} • Imutável</div>
+        </div>
+        <div class="arow">
+          <a class="btn-wa" href="https://wa.me/55${waNum}?text=${msgToken}" target="_blank">💬 Notificar no WhatsApp</a>
+          <button class="btn-ghost sm" onclick="navigator.clipboard.writeText('${tokStr}').then(()=>toast('Copiado!','ok'))">📋 Copiar</button>
+        </div>
+      ` : `
+        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Sem token. Defina o perfil acima e clique em gerar:</p>
+        <button class="btn-primary sm" onclick="gerarTokMusico('${id}')">🔑 Gerar token</button>
+      `}
+    </div>`;
   openD();
+}
+
+async function salvarEdMusico(id) {
+  const nivel = document.getElementById('edNivel').value;
+  load(true);
+  const r = await api('editarMusico', {
+    id,
+    nome:         document.getElementById('edNome').value.trim(),
+    eklesia:      document.getElementById('edEkl').value.trim(),
+    whatsapp:     document.getElementById('edWa').value.trim(),
+    instrumentos: document.getElementById('edInstr').value.trim(),
+    banda:        document.getElementById('edBanda').value.trim(),
+    isLider:      nivel === 'lider' ? 'sim' : 'nao',
+  });
+  if (nivel === 'lider') await api('promoverLider',{musicoId:id});
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Dados atualizados! ✅','ok');
+  closeD();
+  await loadMusicos();
+}
+
+async function gerarTokMusico(id) {
+  const m = _aMusicos.find(x => x.Id === id);
+  if (!m) { toast('Músico não encontrado','err'); return; }
+  const nivel = document.getElementById('edNivel')?.value || 'voluntario';
+  load(true);
+  const r = await api('gerarToken',{nome:m.Nome||'',eklesia:m.Eklesia||'',nivel,musicoId:id});
+  if (nivel === 'lider') await api('promoverLider',{musicoId:id});
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Token: '+r.token+' ✅','ok');
+  closeD();
+  await loadMusicos();
+  setTimeout(()=>detMusico(id),500);
 }
 
 async function gerarTokMusico(mid,nome,ekl,wa_num){
