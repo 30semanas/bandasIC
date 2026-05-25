@@ -585,15 +585,15 @@ async function openDetailEscalaLider(id) {
   if (!res.ok) { showToast('Erro ao carregar', 'error'); return; }
   const e = res.data;
   const aceites = res.aceites || [];
-  const d = parseDate(e.Data);
+  const d = parseDate(field(e,'Data','data'));
 
-  document.getElementById('detailTitle').textContent = e.Titulo;
+  document.getElementById('detailTitle').textContent = field(e,'Titulo','titulo');
   document.getElementById('detailBody').innerHTML = `
     <div class="info-grid">
       <div class="info-item"><label>Data</label><span>${d.day}/${d.mon}/${d.year}</span></div>
-      <div class="info-item"><label>Horário</label><span>${e.Horario}</span></div>
-      <div class="info-item"><label>Local</label><span>${e.Local}</span></div>
-      <div class="info-item"><label>Banda</label><span>${e.BandaNome}</span></div>
+      <div class="info-item"><label>Horário</label><span>${normHorario(field(e,'Horario','horario'))}</span></div>
+      <div class="info-item"><label>Local</label><span>${field(e,'Local','local')||'—'}</span></div>
+      <div class="info-item"><label>Banda</label><span>${field(e,'BandaNome','bandaNome','bandanome')||'—'}</span></div>
     </div>
     <div class="detail-section">
       <h3>Status de aceite (${aceites.length})</h3>
@@ -940,7 +940,16 @@ async function loadAdmInscricoes() {
   showLoading(true);
   const res = await api('getInscricoes');
   showLoading(false);
-  _inscAll = res.ok ? res.data : [];
+  if (!res.ok) {
+    showToast('Erro ao carregar inscrições: ' + (res.error || 'desconhecido'), 'error');
+    _inscAll = [];
+  } else {
+    _inscAll = res.data || [];
+  }
+  // Atualizar badge
+  const pendentes = _inscAll.filter(i => (field(i,'Status','status') || 'pendente') === 'pendente').length;
+  const badge = document.getElementById('badgeInsc');
+  if (badge) badge.textContent = pendentes;
   renderAdmInscricoes();
 }
 
@@ -1064,8 +1073,8 @@ async function openDetailMusico(id) {
   const tokenExistente = tokens.find(t => String(t.MusicoId||t.musicoId) === String(id));
 
   const nome  = field(m,'Nome','nome') || '—';
-  const ekl   = field(m,'Eklesia','eklesia') || '—';
-  const wa    = field(m,'WhatsApp','whatsapp','Whatsapp') || '';
+  const ekl   = (field(m,'Eklesia','eklesia')||'').replace('undefined','') || '—';
+  const wa    = (field(m,'WhatsApp','whatsapp','Whatsapp')||'').replace('undefined','') || '';
   const instr = field(m,'Instrumentos','instrumentos') || '';
   const banda = field(m,'Banda','banda') || 'Sem banda';
   const lider = field(m,'IsLider','isLider','islider') === 'sim';
