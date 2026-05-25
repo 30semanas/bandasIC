@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ministério de Música</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="screen active">
+  <div class="login-bg">
+    <div class="login-orb orb1"></div>
+    <div class="login-orb orb2"></div>
+    <div class="login-orb orb3"></div>
+  </div>
+  <div class="login-container">
+    <div class="login-logo">
+      <div class="logo-icon">♪</div>
+      <h1>Ministério</h1>
+      <span>Sistema de Gestão Musical</span>
+    </div>
+    <div class="login-card">
+      <h2>Entrar</h2>
+      <div class="form-group">
+        <label>E-mail ou usuário</label>
+        <input type="text" id="loginUser" placeholder="seu@email.com" />
+      </div>
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="loginPass" placeholder="••••••••" />
+      </div>
+      <button class="btn-primary full" onclick="login()">Entrar</button>
+      <div class="login-divider">ou</div>
+      <button class="btn-ghost full" onclick="showPublicInscricao()">Inscrever-se para audição →</button>
+    </div>
+  </div>
+</div>
+
+<!-- PUBLIC INSCRICAO SCREEN -->
+<div id="inscricaoScreen" class="screen">
+  <div class="public-header">
+    <div class="logo-icon small">♪</div>
+    <span>Ministério de Música</span>
+    <button class="btn-ghost sm" onclick="showLogin()">← Voltar</button>
+  </div>
+  <div class="public-container">
+    <div class="public-hero">
+      <h1>Quero fazer parte! 🎵</h1>
+      <p>Preencha os dados abaixo para solicitar sua audição</p>
+    </div>
+    <div class="form-card">
+      <div class="form-section">
+        <h3>Dados pessoais</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nome completo *</label>
+            <input type="text" id="inscNome" placeholder="Seu nome completo" />
+          </div>
+          <div class="form-group">
+            <label>WhatsApp *</label>
+            <input type="text" id="inscWhats" placeholder="(11) 99999-9999" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Foto (opcional)</label>
+          <div class="upload-area" onclick="document.getElementById('inscFoto').click()">
+            <div id="fotoPreview" class="foto-placeholder">
+              <span>📷</span>
+              <p>Clique para enviar sua foto</p>
+            </div>
+            <input type="file" id="inscFoto" accept="image/*" style="display:none" onchange="previewFoto(this)" />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Instrumentos para audição</h3>
+        <p class="hint">Selecione todos os instrumentos que deseja auditar</p>
+        <div class="instrument-grid">
+          <label class="instrument-chip"><input type="checkbox" value="Voz" /><span>🎤 Voz</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Violão" /><span>🎸 Violão</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Guitarra" /><span>🎸 Guitarra</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Baixo" /><span>🎵 Baixo</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Teclado" /><span>🎹 Teclado</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Bateria" /><span>🥁 Bateria</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Percussão" /><span>🪘 Percussão</span></label>
+          <label class="instrument-chip"><input type="checkbox" value="Backing Vocal" /><span>🎶 Backing Vocal</span></label>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>Observações</h3>
+        <textarea id="inscObs" placeholder="Alguma informação adicional? Experiência musical, disponibilidade..." rows="3"></textarea>
+      </div>
+
+      <button class="btn-primary full lg" onclick="enviarInscricao()">Enviar inscrição 🚀</button>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="appScreen" class="screen">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon small">♪</div>
+      <span>Ministério</span>
+    </div>
+
+    <div class="sidebar-user">
+      <div class="user-avatar" id="sidebarAvatar">A</div>
+      <div class="user-info">
+        <strong id="sidebarName">Admin</strong>
+        <span id="sidebarRole" class="role-badge">Administrador</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Principal</div>
+      <a class="nav-item active" onclick="showPage('dashboard')" data-page="dashboard">
+        <span class="nav-icon">⊞</span> Dashboard
+      </a>
+      <a class="nav-item" onclick="showPage('audicoes')" data-page="audicoes">
+        <span class="nav-icon">🎙</span> Audições
+        <span class="badge" id="badgeAudicoes">3</span>
+      </a>
+      <a class="nav-item" onclick="showPage('musicos')" data-page="musicos">
+        <span class="nav-icon">👥</span> Músicos
+      </a>
+      <a class="nav-item" onclick="showPage('bandas')" data-page="bandas">
+        <span class="nav-icon">🎸</span> Bandas
+      </a>
+
+      <div class="nav-section-label">Organização</div>
+      <a class="nav-item" onclick="showPage('escalas')" data-page="escalas">
+        <span class="nav-icon">📅</span> Escalas
+        <span class="badge warning" id="badgeEscalas">5</span>
+      </a>
+      <a class="nav-item" onclick="showPage('ensaios')" data-page="ensaios">
+        <span class="nav-icon">🎵</span> Ensaios
+      </a>
+      <a class="nav-item" onclick="showPage('repertorios')" data-page="repertorios">
+        <span class="nav-icon">📋</span> Repertórios
+      </a>
+      <a class="nav-item" onclick="showPage('celebracoes')" data-page="celebracoes">
+        <span class="nav-icon">✨</span> Celebrações
+      </a>
+
+      <div class="nav-section-label">Biblioteca</div>
+      <a class="nav-item" onclick="showPage('musicas')" data-page="musicas">
+        <span class="nav-icon">🎼</span> Músicas
+      </a>
+      <a class="nav-item" onclick="showPage('subs')" data-page="subs">
+        <span class="nav-icon">🔄</span> Substituições
+      </a>
+    </nav>
+
+    <button class="btn-logout" onclick="logout()">Sair →</button>
+  </aside>
+
+  <!-- TOPBAR MOBILE -->
+  <div class="topbar">
+    <button class="hamburger" onclick="toggleSidebar()">☰</button>
+    <span class="topbar-title" id="topbarTitle">Dashboard</span>
+    <div class="topbar-user">
+      <div class="user-avatar sm" id="topbarAvatar">A</div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- DASHBOARD -->
+    <div id="page-dashboard" class="page active">
+      <div class="page-header">
+        <h1>Dashboard</h1>
+        <span class="page-subtitle">Bem-vindo de volta! Aqui está um resumo do ministério.</span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card" style="--accent: #6C63FF">
+          <div class="stat-icon">👥</div>
+          <div class="stat-info">
+            <span class="stat-label">Músicos ativos</span>
+            <strong class="stat-value">24</strong>
+          </div>
+        </div>
+        <div class="stat-card" style="--accent: #FF6B6B">
+          <div class="stat-icon">🎙</div>
+          <div class="stat-info">
+            <span class="stat-label">Audições pendentes</span>
+            <strong class="stat-value">3</strong>
+          </div>
+        </div>
+        <div class="stat-card" style="--accent: #4ECDC4">
+          <div class="stat-icon">🎸</div>
+          <div class="stat-info">
+            <span class="stat-label">Bandas ativas</span>
+            <strong class="stat-value">4</strong>
+          </div>
+        </div>
+        <div class="stat-card" style="--accent: #FFD93D">
+          <div class="stat-icon">📅</div>
+          <div class="stat-info">
+            <span class="stat-label">Escalas este mês</span>
+            <strong class="stat-value">12</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        <div class="dash-section">
+          <div class="section-header">
+            <h2>Próximas escalas</h2>
+            <button class="btn-ghost sm" onclick="showPage('escalas')">Ver todas →</button>
+          </div>
+          <div class="escala-list" id="dashEscalas"></div>
+        </div>
+
+        <div class="dash-section">
+          <div class="section-header">
+            <h2>Audições aguardando</h2>
+            <button class="btn-ghost sm" onclick="showPage('audicoes')">Ver todas →</button>
+          </div>
+          <div id="dashAudicoes"></div>
+        </div>
+
+        <div class="dash-section wide">
+          <div class="section-header">
+            <h2>Próximas celebrações</h2>
+            <button class="btn-ghost sm" onclick="showPage('celebracoes')">Ver todas →</button>
+          </div>
+          <div id="dashCelebracoes"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUDICOES -->
+    <div id="page-audicoes" class="page">
+      <div class="page-header">
+        <h1>Audições</h1>
+        <button class="btn-primary" onclick="showPublicInscricao()">+ Nova inscrição</button>
+      </div>
+
+      <div class="filter-bar">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" placeholder="Buscar por nome ou instrumento..." onkeyup="filterAudicoes(this.value)" />
+        </div>
+        <div class="filter-tabs">
+          <button class="filter-tab active" onclick="filterTabAudicao('todos', this)">Todos</button>
+          <button class="filter-tab" onclick="filterTabAudicao('pendente', this)">Pendentes</button>
+          <button class="filter-tab" onclick="filterTabAudicao('agendada', this)">Agendadas</button>
+          <button class="filter-tab" onclick="filterTabAudicao('aprovado', this)">Aprovados</button>
+          <button class="filter-tab" onclick="filterTabAudicao('reprovado', this)">Reprovados</button>
+        </div>
+      </div>
+
+      <div class="audicoes-grid" id="audicoesGrid"></div>
+    </div>
+
+    <!-- MUSICOS -->
+    <div id="page-musicos" class="page">
+      <div class="page-header">
+        <h1>Músicos</h1>
+        <button class="btn-primary" onclick="openModalMusico()">+ Adicionar músico</button>
+      </div>
+      <div class="filter-bar">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" placeholder="Buscar músico..." onkeyup="filterMusicos(this.value)" />
+        </div>
+        <select onchange="filterMusicoInstrumento(this.value)" class="select-filter">
+          <option value="">Todos os instrumentos</option>
+          <option>Voz</option><option>Violão</option><option>Guitarra</option>
+          <option>Baixo</option><option>Teclado</option><option>Bateria</option>
+          <option>Percussão</option><option>Backing Vocal</option>
+        </select>
+      </div>
+      <div class="musicos-grid" id="musicosGrid"></div>
+    </div>
+
+    <!-- BANDAS -->
+    <div id="page-bandas" class="page">
+      <div class="page-header">
+        <h1>Bandas</h1>
+        <button class="btn-primary" onclick="openModalBanda()">+ Nova banda</button>
+      </div>
+      <div class="bandas-grid" id="bandasGrid"></div>
+    </div>
+
+    <!-- ESCALAS -->
+    <div id="page-escalas" class="page">
+      <div class="page-header">
+        <h1>Escalas</h1>
+        <button class="btn-primary" onclick="openModalEscala()">+ Nova escala</button>
+      </div>
+      <div class="filter-bar">
+        <div class="filter-tabs">
+          <button class="filter-tab active" onclick="filterTabEscala('todas', this)">Todas</button>
+          <button class="filter-tab" onclick="filterTabEscala('pendente', this)">Pendentes</button>
+          <button class="filter-tab" onclick="filterTabEscala('aceita', this)">Aceitas</button>
+          <button class="filter-tab" onclick="filterTabEscala('recusada', this)">Recusadas</button>
+        </div>
+      </div>
+      <div class="escalas-list" id="escalasGrid"></div>
+    </div>
+
+    <!-- ENSAIOS -->
+    <div id="page-ensaios" class="page">
+      <div class="page-header">
+        <h1>Ensaios</h1>
+        <button class="btn-primary" onclick="openModalEnsaio()">+ Novo ensaio</button>
+      </div>
+      <div class="ensaios-list" id="ensaiosGrid"></div>
+    </div>
+
+    <!-- REPERTORIOS -->
+    <div id="page-repertorios" class="page">
+      <div class="page-header">
+        <h1>Repertórios</h1>
+        <button class="btn-primary" onclick="openModalRepertorio()">+ Novo repertório</button>
+      </div>
+      <div class="repertorios-grid" id="repertoriosGrid"></div>
+    </div>
+
+    <!-- CELEBRACOES -->
+    <div id="page-celebracoes" class="page">
+      <div class="page-header">
+        <h1>Celebrações</h1>
+        <button class="btn-primary" onclick="openModalCelebracao()">+ Nova celebração</button>
+      </div>
+      <div class="celebracoes-grid" id="celebracoesGrid"></div>
+    </div>
+
+    <!-- MUSICAS -->
+    <div id="page-musicas" class="page">
+      <div class="page-header">
+        <h1>Biblioteca de Músicas</h1>
+        <button class="btn-primary" onclick="openModalMusica()">+ Adicionar música</button>
+      </div>
+      <div class="filter-bar">
+        <div class="search-box">
+          <span>🔍</span>
+          <input type="text" placeholder="Buscar música ou artista..." onkeyup="filterMusicas(this.value)" />
+        </div>
+      </div>
+      <div class="musicas-grid" id="musicasGrid"></div>
+    </div>
+
+    <!-- SUBS -->
+    <div id="page-subs" class="page">
+      <div class="page-header">
+        <h1>Substituições</h1>
+      </div>
+      <div class="subs-container" id="subsGrid"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- MODALS -->
+<div id="modalOverlay" class="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modalBox">
+    <div class="modal-header">
+      <h2 id="modalTitle">Modal</h2>
+      <button class="modal-close" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<!-- DETAIL PANEL -->
+<div id="detailPanel" class="detail-panel">
+  <div class="detail-header">
+    <button onclick="closeDetail()" class="btn-ghost sm">← Voltar</button>
+    <h2 id="detailTitle">Detalhes</h2>
+  </div>
+  <div id="detailContent" class="detail-content"></div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
