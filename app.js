@@ -697,12 +697,12 @@ async function detMusico(id){
 }
 
 async function salvarEdMusico(id) {
-  const nivel  = document.getElementById('edNivel').value;
-  const nome   = document.getElementById('edNome').value.trim();
-  const ekl    = document.getElementById('edEkl').value.trim();
-  const whats  = document.getElementById('edWa').value.trim();
-  const instr  = document.getElementById('edInstr').value.trim();
-  const banda  = document.getElementById('edBanda').value.trim();
+  const nivel   = document.getElementById('edNivel').value;
+  const nome    = document.getElementById('edNome').value.trim();
+  const ekl     = document.getElementById('edEkl').value.trim();
+  const whats   = document.getElementById('edWa').value.trim();
+  const instr   = document.getElementById('edInstr').value.trim();
+  const banda   = document.getElementById('edBanda').value.trim();
   const isLider = nivel === 'lider' ? 'sim' : 'nao';
 
   load(true);
@@ -713,31 +713,29 @@ async function salvarEdMusico(id) {
     instrumentos: instr, banda, isLider,
   });
 
-  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar', 'err'); return; }
+  if (!r.ok) {
+    load(false);
+    toast(r.error || 'Erro ao salvar', 'err');
+    return;
+  }
 
-  // 2. Atualizar IsLider no músico
-  if (nivel === 'lider') {
+  // 2. Promover/rebaixar IsLider
+  if (isLider === 'sim') {
     await api('promoverLider', { musicoId: id });
   }
 
-  // 3. Se tem token, atualizar nível do token existente
-  const rToks = await api('getTokens');
-  const toks  = rToks.ok ? rToks.data : [];
-  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
-
-  if (tokEx) {
-    // Atualiza nível do token existente (não cria novo)
-    const rNiv = await api('atualizarNivelToken', { musicoId: id, nivel });
-    if (rNiv.ok) {
-      toast('Dados salvos! Nível do token atualizado para ' + (nivel === 'lider' ? 'Líder' : 'Voluntário') + ' ✅', 'ok');
-    } else {
-      toast('Dados salvos! ' + (rNiv.error || ''), 'ok');
-    }
-  } else {
-    toast('Dados salvos! ✅', 'ok');
-  }
+  // 3. Atualizar nível do token (busca por musicoId OU por nome)
+  const rNiv = await api('atualizarNivelToken', { musicoId: id, nivel, nome });
 
   load(false);
+
+  if (rNiv.ok) {
+    toast('Salvo! Nível → ' + (nivel === 'lider' ? '🎸 Líder' : '🎵 Voluntário') + ' ✅', 'ok');
+  } else {
+    // Token não existe ainda — apenas salvar dados
+    toast('Dados salvos! ✅ (Token ainda não gerado)', 'ok');
+  }
+
   closeD();
   await loadMusicos();
 }
