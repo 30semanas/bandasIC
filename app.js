@@ -81,11 +81,25 @@ async function enviarInscricao(){
   if (!inst.length){ toast('Selecione ao menos um instrumento','err'); return; }
   load(true);
   const r = await api('inscricao',{nome,eklesia:ekl,whatsapp:wa,instrumentos:inst,obs});
-  // Upload foto separado
+  // Upload foto via fetch POST (separado do JSONP)
   const fotoFile = document.getElementById('iFoto').files[0];
   if (fotoFile && r.ok) {
-    const b64 = await toB64(fotoFile);
-    await api('uploadFotoInscricao',{inscricaoId:r.id, fotoBase64:b64.split(',')[1], fotoNome:'foto_'+nome.replace(/\s+/g,'_')+'_'+Date.now()+'.jpg'});
+    try {
+      const b64 = await toB64(fotoFile);
+      const url = atob(_e);
+      // Envia em chunks menores se necessário, mas primeiro tenta direto
+      const payload = JSON.stringify({
+        action: 'uploadFotoInscricao',
+        sessionKey: '',
+        inscricaoId: r.id,
+        fotoBase64: b64.split(',')[1],
+        fotoNome: 'foto_' + nome.replace(/\s+/g,'_') + '_' + Date.now() + '.jpg',
+      });
+      // Usa fetch com no-cors — Apps Script processa mas não retorna
+      fetch(url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body: payload });
+    } catch(e) {
+      console.warn('Upload foto:', e);
+    }
   }
   load(false);
   if (!r.ok){ toast(r.error||'Erro ao enviar','err'); return; }
