@@ -17,24 +17,40 @@ async function api(action, data = {}) {
   const session = getSession();
   const payload = { action, sessionKey: session?.sessionKey || '', ...data };
 
-  try {
-    // Sempre GET com parâmetros — Apps Script lida melhor com CORS assim
+  return new Promise((resolve) => {
+    // Usa callback JSONP — único método que funciona com Apps Script sem servidor proxy
+    const cbName = '_cb_' + Math.random().toString(36).substring(2, 9);
     const u = new URL(url);
     Object.entries(payload).forEach(([k, v]) => {
       u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
     });
-    const resp = await fetch(u.toString(), { redirect: 'follow' });
-    const text = await resp.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      console.error('Resposta não é JSON:', text);
-      return { ok: false, error: 'Resposta inválida do servidor' };
+    u.searchParams.set('callback', cbName);
+
+    const script = document.createElement('script');
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve({ ok: false, error: 'Tempo de resposta esgotado' });
+    }, 15000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
     }
-  } catch(e) {
-    console.error('API error:', e);
-    return { ok: false, error: 'Erro de conexão. Verifique sua internet.' };
-  }
+
+    window[cbName] = (result) => {
+      cleanup();
+      resolve(result);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      resolve({ ok: false, error: 'Erro de conexão' });
+    };
+
+    script.src = u.toString();
+    document.head.appendChild(script);
+  });
 }
 
 // ==================== SESSION ====================
@@ -135,7 +151,23 @@ async function submitInscricao() {
   if (!instrs.length) { showToast('Selecione ao menos um instrumento', 'error'); return; }
 
   showLoading(true);
-  const res = await api('submitInscricao', { nome, eklesia, whatsapp: whats, instrumentos: instrs, obs });
+
+  // Upload da foto se selecionada
+  let fotoBase64 = '';
+  const fotoFile = document.getElementById('iFoto').files[0];
+  if (fotoFile) {
+    fotoBase64 = await fileToBase64(fotoFile);
+  }
+
+  const res = await api('submitInscricao', {
+    nome, eklesia,
+    whatsapp: whats,
+    instrumentos: instrs,
+    obs,
+    fotoBase64: fotoBase64 ? fotoBase64.split(',')[1] : '',
+    fotoNome: fotoFile ? `foto_${nome.replace(/\s/g,'_')}_${Date.now()}.jpg` : '',
+  });
+
   showLoading(false);
 
   if (!res.ok) { showToast(res.error || 'Erro ao enviar', 'error'); return; }
@@ -147,6 +179,15 @@ async function submitInscricao() {
       <p style="color:var(--text2);margin-bottom:28px">Em breve o administrador entrará em contato pelo WhatsApp para agendar sua audição.</p>
       <button class="btn-primary" onclick="goTo('screenHome')">Voltar ao início</button>
     </div>`;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 // ==================== VOLUNTÁRIO ====================
