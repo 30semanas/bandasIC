@@ -1057,7 +1057,7 @@ async function openDetailMusico(id) {
   showLoading(false);
 
   const list = resMusicos.ok ? resMusicos.data : [];
-  const m = list.find(x => (field(x,'Id','id')) === id);
+  const m = list.find(x => String(field(x,'Id','id')) === String(id));
   if (!m) { showToast('Músico não encontrado', 'error'); return; }
 
   const tokens = resTokens.ok ? resTokens.data : [];
@@ -1171,6 +1171,7 @@ async function loadAdmMusicos() {
   const res = await api('getMusicos');
   showLoading(false);
   const list = res.ok ? res.data : [];
+  _admMusicosList_data = list;
   const el = document.getElementById('admMusicosList');
   if (!list.length) { el.innerHTML = emptyState('👥','Nenhum músico cadastrado'); return; }
   list.sort((a,b)=>(a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
