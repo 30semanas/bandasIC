@@ -65,6 +65,12 @@ function saveSession(data) {
   }));
 }
 
+function updateSession(extra) {
+  const s = getSession();
+  if (!s) return;
+  sessionStorage.setItem('bic_session', JSON.stringify({ ...s, ...extra }));
+}
+
 function getSession() {
   try {
     const s = JSON.parse(sessionStorage.getItem('bic_session'));
@@ -216,6 +222,19 @@ async function initVoluntario(res) {
   document.getElementById('volGreeting').textContent = `Olá, ${res.nome.split(' ')[0]}! 👋`;
   document.getElementById('volEklesia').textContent = res.eklesia;
   showScreen('screenVoluntario');
+
+  // Carregar perfil do músico vinculado ao token
+  if (res.musicoId) {
+    const perfil = await api('getMusicoById', { id: res.musicoId });
+    if (perfil.ok && perfil.data) {
+      const m = perfil.data;
+      const nome = m.Nome || m.nome || res.nome;
+      document.getElementById('volGreeting').textContent = `Olá, ${nome.split(' ')[0]}! 👋`;
+      document.getElementById('volEklesia').textContent = m.Eklesia || m.eklesia || res.eklesia;
+      updateSession({ nome, eklesia: m.Eklesia || m.eklesia });
+    }
+  }
+
   await loadVolEscalas();
   await loadVolBanda();
   await loadVolSubs();
@@ -355,6 +374,19 @@ async function initLider(res) {
   document.getElementById('lidNome').textContent = res.nome;
   document.getElementById('lidEklesia').textContent = res.eklesia;
   showScreen('screenLider');
+
+  // Carregar perfil do líder vinculado ao token
+  if (res.musicoId) {
+    const perfil = await api('getMusicoById', { id: res.musicoId });
+    if (perfil.ok && perfil.data) {
+      const m = perfil.data;
+      const nome = m.Nome || m.nome || res.nome;
+      document.getElementById('lidNome').textContent = nome;
+      document.getElementById('lidEklesia').textContent = m.Eklesia || m.eklesia || res.eklesia;
+      updateSession({ nome, eklesia: m.Eklesia || m.eklesia });
+    }
+  }
+
   await loadLidBandas();
   await loadLidEscalas();
   await loadLidRepertorios();
@@ -808,7 +840,8 @@ function filterInsc(f, el) {
 }
 
 function renderAdmInscricoes() {
-  const list = _inscFilter === 'todos' ? _inscAll : _inscAll.filter(i => i.Status === _inscFilter);
+  let list = _inscFilter === 'todos' ? [..._inscAll] : _inscAll.filter(i => (i.Status||i.status) === _inscFilter);
+  list.sort((a,b) => (a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
   const el = document.getElementById('admInscricoesList');
   if (!list.length) { el.innerHTML = emptyState('🎙','Nenhuma inscrição'); return; }
   el.innerHTML = list.map(i => `
@@ -909,10 +942,11 @@ async function loadAdmMusicos() {
   const list = res.ok ? res.data : [];
   const el = document.getElementById('admMusicosList');
   if (!list.length) { el.innerHTML = emptyState('👥','Nenhum músico cadastrado'); return; }
+  list.sort((a,b)=>(a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
   el.innerHTML = list.map(m => `
     <div class="card">
       <div class="card-head">
-        <div class="avatar">${(m.Nome||'?')[0]}</div>
+        <div class="avatar">${(m.Nome||m.nome||'?')[0]}</div>
         <div>
           <div class="card-name">${m.Nome}</div>
           <div class="card-sub">${m.Eklesia} • 📱 ${m.WhatsApp}</div>
@@ -948,10 +982,27 @@ async function loadAdmBandas() {
     </div>`).join('');
 }
 
-function openModalCriarBanda() {
+async function openModalCriarBanda() {
+  // Buscar líderes
+  showLoading(true);
+  const resLid = await api('getLideres');
+  showLoading(false);
+  const lideres = resLid.ok ? resLid.data : [];
+
   openModal('Nova Banda', `
     <div class="form-group"><label>Nome da banda *</label><input type="text" id="bNome"/></div>
-    <div class="form-group"><label>Nome do líder *</label><input type="text" id="bLider"/></div>
+    <div class="form-group"><label>Líder da banda *</label>
+      <select id="bLiderId">
+        <option value="">— Selecione um líder —</option>
+        ${lideres.map(m => {
+          const mid = m.Id || m.id || '';
+          const mnome = m.Nome || m.nome || '';
+          const mekl = m.Eklesia || m.eklesia || '';
+          return `<option value="${mid}" data-nome="${mnome}">${mnome} — ${mekl}</option>`;
+        }).join('')}
+      </select>
+      ${lideres.length === 0 ? '<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder cadastrado. Promova um músico a líder primeiro.</p>' : ''}
+    </div>
     <div class="form-group"><label>Emoji</label><input type="text" id="bEmoji" value="🎸" maxlength="2"/></div>
     <div class="modal-footer">
       <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
@@ -960,10 +1011,15 @@ function openModalCriarBanda() {
 }
 
 async function salvarBanda() {
+  const sel = document.getElementById('bLiderId');
+  const liderMusicoId = sel.value;
+  const liderNome = sel.options[sel.selectedIndex]?.dataset?.nome || '';
+  if (!liderMusicoId) { showToast('Selecione um líder', 'error'); return; }
   showLoading(true);
   const res = await api('criarBanda', {
     nome: document.getElementById('bNome').value,
-    liderNome: document.getElementById('bLider').value,
+    liderNome,
+    liderMusicoId,
     emoji: document.getElementById('bEmoji').value || '🎸',
   });
   showLoading(false);
@@ -1117,10 +1173,39 @@ async function loadAdmTokens() {
     </div>`).join('');
 }
 
-function openModalGerarToken() {
+async function openModalGerarToken() {
+  showLoading(true);
+  const [resMusicos, resTokens] = await Promise.all([api('getMusicos'), api('getTokens')]);
+  showLoading(false);
+
+  const musicos = (resMusicos.ok ? resMusicos.data : [])
+    .sort((a,b) => (a.Nome||a.nome||'').localeCompare(b.Nome||b.nome||''));
+  const tokensExistentes = (resTokens.ok ? resTokens.data : []).map(t => String(t.MusicoId));
+
+  // Filtrar apenas sem token
+  const semToken = musicos.filter(m => !tokensExistentes.includes(String(m.Id || m.id || '')));
+
   openModal('Gerar Token de Acesso', `
-    <div class="form-group"><label>Nome *</label><input type="text" id="tNome"/></div>
-    <div class="form-group"><label>Eklesia / Igreja</label><input type="text" id="tEklesia"/></div>
+    <div class="form-group"><label>Músico / Pessoa *</label>
+      <select id="tMusicoSel" onchange="preencherDadosToken(this)">
+        <option value="">— Selecione —</option>
+        ${semToken.map(m => {
+          const mid = m.Id||m.id||'';
+          const mnome = m.Nome||m.nome||'';
+          const mekl = m.Eklesia||m.eklesia||'';
+          const mlider = m.IsLider||m.isLider||'nao';
+          return `<option value="${mid}" data-nome="${mnome}" data-eklesia="${mekl}" data-lider="${mlider}">${mnome} — ${mekl}</option>`;
+        }).join('')}
+        <option value="__novo__" data-nome="" data-eklesia="" data-lider="nao">+ Admin externo (novo)</option>
+      </select>
+      ${semToken.length === 0 ? '<p style="font-size:11px;color:var(--yellow);margin-top:4px">Todos os músicos já possuem token.</p>' : ''}
+    </div>
+    <div class="form-group" id="tNomeGrp" style="display:none">
+      <label>Nome</label><input type="text" id="tNome" placeholder="Nome completo"/>
+    </div>
+    <div class="form-group" id="tEklesiaGrp" style="display:none">
+      <label>Eklesia</label><input type="text" id="tEklesia"/>
+    </div>
     <div class="form-group"><label>Nível de acesso *</label>
       <select id="tNivel">
         <option value="voluntario">🎵 Voluntário</option>
@@ -1128,26 +1213,43 @@ function openModalGerarToken() {
         <option value="admin">⚙️ Administrador</option>
       </select>
     </div>
-    <div class="form-group"><label>ID do Músico (se voluntário)</label><input type="text" id="tMusicoId" placeholder="Deixe em branco para admin/líder"/></div>
     <div class="modal-footer">
       <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
       <button class="btn-primary sm" onclick="salvarToken()">Gerar token</button>
     </div>`);
 }
 
+function preencherDadosToken(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  const isNovo = sel.value === '__novo__';
+  document.getElementById('tNomeGrp').style.display = isNovo ? '' : 'none';
+  document.getElementById('tEklesiaGrp').style.display = isNovo ? '' : 'none';
+  // Pré-selecionar nível se for líder
+  const isLider = opt.dataset.lider === 'sim';
+  if (isLider) document.getElementById('tNivel').value = 'lider';
+}
+
 async function salvarToken() {
-  const nome = document.getElementById('tNome').value.trim();
-  if (!nome) { showToast('Informe o nome', 'error'); return; }
+  const sel = document.getElementById('tMusicoSel');
+  const musicoId = sel.value;
+  const opt = sel.options[sel.selectedIndex];
+  const isNovo = musicoId === '__novo__';
+
+  let nome = isNovo ? document.getElementById('tNome').value.trim() : (opt.dataset.nome || '');
+  let eklesia = isNovo ? document.getElementById('tEklesia').value.trim() : (opt.dataset.eklesia || '');
+  const nivel = document.getElementById('tNivel').value;
+
+  if (!nome) { showToast('Selecione ou informe o nome', 'error'); return; }
+
   showLoading(true);
   const res = await api('gerarToken', {
-    nome,
-    eklesia: document.getElementById('tEklesia').value,
-    nivel: document.getElementById('tNivel').value,
-    musicoId: document.getElementById('tMusicoId').value,
+    nome, eklesia, nivel,
+    musicoId: isNovo ? '' : musicoId,
   });
   showLoading(false);
+
   if (!res.ok) { showToast(res.error || 'Erro', 'error'); return; }
-  showToast(`Token gerado: ${res.token}`, 'success');
+  showToast(`Token gerado: ${res.token} ✅`, 'success');
   closeModalDirect();
   await loadAdmTokens();
 }
