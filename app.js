@@ -14,31 +14,26 @@ const _e=[
 
 async function api(action, data = {}) {
   const url = atob(_e);
-  const isGet = ['getInscricoes','getMusicos','getBandas','getEscalas','getMusicas',
-    'getRepertorios','getCelebracoes','getTokens','getDashboard','getMinhasBandas',
-    'getMinhasEscalas','getMeuPerfil','getSubs','getEscalaById'].includes(action);
-
   const session = getSession();
   const payload = { action, sessionKey: session?.sessionKey || '', ...data };
 
   try {
-    let resp;
-    if (isGet) {
-      const u = new URL(url);
-      Object.entries(payload).forEach(([k,v]) => u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : v));
-      resp = await fetch(u.toString());
-    } else {
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload),
-      });
+    // Sempre GET com parâmetros — Apps Script lida melhor com CORS assim
+    const u = new URL(url);
+    Object.entries(payload).forEach(([k, v]) => {
+      u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+    });
+    const resp = await fetch(u.toString(), { redirect: 'follow' });
+    const text = await resp.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      console.error('Resposta não é JSON:', text);
+      return { ok: false, error: 'Resposta inválida do servidor' };
     }
-    const json = await resp.json();
-    return json;
   } catch(e) {
     console.error('API error:', e);
-    return { ok: false, error: 'Erro de conexão' };
+    return { ok: false, error: 'Erro de conexão. Verifique sua internet.' };
   }
 }
 
