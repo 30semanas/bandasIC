@@ -256,24 +256,48 @@ function filterEscalasVol(f, el) {
 }
 
 function renderVolEscalas(f) {
-  const list = f === 'todas' ? _volEscalas : _volEscalas.filter(e => e.meuStatus === f);
+  const now = new Date();
+  let list = f === 'todas' ? [..._volEscalas] : _volEscalas.filter(e => (e.meuStatus||'pendente') === f);
+
+  // Ordenar: pendentes futuras primeiro, depois passadas
+  list.sort((a, b) => {
+    const dA = new Date((a.Data||a.data||'9999') + 'T12:00:00');
+    const dB = new Date((b.Data||b.data||'9999') + 'T12:00:00');
+    const stA = a.meuStatus || 'pendente';
+    const stB = b.meuStatus || 'pendente';
+    const pastA = dA < now;
+    const pastB = dB < now;
+    // Pendentes abertas no topo
+    if (stA === 'pendente' && !pastA && (stB !== 'pendente' || pastB)) return -1;
+    if (stB === 'pendente' && !pastB && (stA !== 'pendente' || pastA)) return 1;
+    // Passadas depois das futuras
+    if (!pastA && pastB) return -1;
+    if (pastA && !pastB) return 1;
+    return dA - dB;
+  });
+
   const el = document.getElementById('volEscalasList');
   if (!list.length) { el.innerHTML = emptyState('📅','Nenhuma escala encontrada'); return; }
   el.innerHTML = list.map(e => {
-    const d = parseDate(e.Data);
+    const id   = e.Id || e.id || '';
+    const titulo = e.Titulo || e.titulo || 'Escala';
+    const horario = e.Horario || e.horario || '';
+    const local   = e.Local   || e.local   || '';
+    const dataStr = e.Data    || e.data    || '';
+    const d = parseDate(dataStr);
+    const isPast = dataStr && new Date(dataStr + 'T12:00:00') < now;
+    const st = e.meuStatus || 'pendente';
     return `
-    <div class="list-item" onclick="openDetailEscalaVol('${e.Id}')">
+    <div class="list-item" onclick="openDetailEscalaVol('${id}')" style="${isPast?'opacity:.75':''}" >
       <div class="date-block">
         <div class="date-day">${d.day}</div>
         <div class="date-mon">${d.mon}</div>
       </div>
       <div class="list-item-info">
-        <div class="list-item-name">${e.Titulo}</div>
-        <div class="list-item-sub">⏰ ${e.Horario} • 📍 ${e.Local}</div>
+        <div class="list-item-name">${titulo} ${isPast?'<span style="font-size:10px;color:var(--text3)">(passada)</span>':''}</div>
+        <div class="list-item-sub">⏰ ${horario} • 📍 ${local}</div>
       </div>
-      <div class="list-item-right">
-        ${badgeStatus(e.meuStatus)}
-      </div>
+      <div class="list-item-right">${badgeStatus(st)}</div>
     </div>`;
   }).join('');
 }
@@ -345,21 +369,109 @@ async function loadVolBanda() {
     </div>`).join('');
 }
 
+let _volSubs = [];
+let _volSubFilter = 'todas';
+
 async function loadVolSubs() {
+  // Inject filter tabs into the subs tab if not already there
+  const subsContainer = document.getElementById('volTab-subs');
+  if (!subsContainer.querySelector('.filter-tabs')) {
+    const tabs = document.createElement('div');
+    tabs.className = 'filter-tabs';
+    tabs.innerHTML = `
+      <button class="ftab active" onclick="filterSubsVol('todas',this)">Todas</button>
+      <button class="ftab" onclick="filterSubsVol('pendente',this)">Abertas</button>
+      <button class="ftab" onclick="filterSubsVol('aceita',this)">Resolvidas</button>
+    `;
+    subsContainer.insertBefore(tabs, document.getElementById('volSubsList'));
+  }
+
   showLoading(true);
-  const res = await api('getSubs', {});
+  // Carregar tanto subs quanto escalas para mostrar informação completa
+  const [resSubs, resEscalas] = await Promise.all([
+    api('getSubs', {}),
+    api('getMinhasEscalas'),
+  ]);
   showLoading(false);
-  const subs = res.ok ? res.data.filter(s => s.Status === 'aberta') : [];
+
+  const s = getSession();
+  const todas = resSubs.ok ? resSubs.data : [];
+  const escalas = resEscalas.ok ? resEscalas.data : [];
+
+  // Enriquecer subs com dados da escala e filtrar apenas do músico
+  _volSubs = todas
+    .filter(sub => {
+      const esc = escalas.find(e => e.Id === sub.EscalaId || e.id === sub.EscalaId);
+      return esc; // mostrar apenas subs das escalas do músico
+    })
+    .map(sub => {
+      const esc = escalas.find(e => (e.Id||e.id) === (sub.EscalaId||sub.escalaId)) || {};
+      return { ...sub, _escala: esc };
+    });
+
+  renderVolSubs();
+}
+
+function filterSubsVol(f, el) {
+  _volSubFilter = f;
+  document.querySelectorAll('#volTab-subs .ftab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  renderVolSubs();
+}
+
+function renderVolSubs() {
   const el = document.getElementById('volSubsList');
-  if (!subs.length) { el.innerHTML = emptyState('🔄','Nenhuma substituição aberta'); return; }
-  el.innerHTML = subs.map(s => `
-    <div class="list-item">
-      <div class="list-item-info">
-        <div class="list-item-name">Sub: ${s.Instrumento}</div>
-        <div class="list-item-sub">Escala ID: ${s.EscalaId}</div>
+  const now = new Date();
+
+  let list = [..._volSubs];
+
+  // Filtrar por status
+  if (_volSubFilter !== 'todas') {
+    const map = { pendente:'aberta', aceita:'resolvida', recusada:'recusada' };
+    list = list.filter(s => (s.Status||s.status) === (map[_volSubFilter] || _volSubFilter));
+  }
+
+  // Ordenar: abertas primeiro, depois passadas por data
+  list.sort((a, b) => {
+    const stA = a.Status || a.status || '';
+    const stB = b.Status || b.status || '';
+    const isOpenA = stA === 'aberta';
+    const isOpenB = stB === 'aberta';
+    if (isOpenA && !isOpenB) return -1;
+    if (!isOpenA && isOpenB) return 1;
+    const dA = new Date((a._escala?.Data || a._escala?.data || '9999') + 'T12:00:00');
+    const dB = new Date((b._escala?.Data || b._escala?.data || '9999') + 'T12:00:00');
+    // Passadas após abertas mas antes das futuras
+    const pastA = dA < now;
+    const pastB = dB < now;
+    if (pastA && !pastB) return -1;
+    if (!pastA && pastB) return 1;
+    return dA - dB;
+  });
+
+  if (!list.length) { el.innerHTML = emptyState('🔄','Nenhuma substituição encontrada'); return; }
+
+  el.innerHTML = list.map(s => {
+    const esc = s._escala || {};
+    const d = parseDate(esc.Data || esc.data || '');
+    const status = s.Status || s.status || 'aberta';
+    const isPast = esc.Data && new Date(esc.Data + 'T12:00:00') < now;
+    return `
+    <div class="list-item" style="${isPast ? 'opacity:.7' : ''}">
+      <div class="date-block">
+        <div class="date-day">${d.day}</div>
+        <div class="date-mon">${d.mon}</div>
       </div>
-      <span class="badge badge-pend">aberta</span>
-    </div>`).join('');
+      <div class="list-item-info">
+        <div class="list-item-name">${esc.Titulo || esc.titulo || 'Escala'}</div>
+        <div class="list-item-sub">🎸 ${s.Instrumento||s.instrumento||'—'} • ${esc.Horario||esc.horario||''} • ${esc.Local||esc.local||''}</div>
+      </div>
+      <div class="list-item-right">
+        <span class="badge ${status==='aberta'?'badge-pend':status==='resolvida'?'badge-aprov':'badge-reprov'}">${status}</span>
+        ${isPast ? '<span style="font-size:10px;color:var(--text3)">passada</span>' : ''}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function volTab(tab, el) {
@@ -895,9 +1007,9 @@ function openDetailInscricao(id) {
 
 function openModalAgendar(id) {
   openModal('Agendar Audição', `
-    <div class="form-group"><label>Data</label><input type="date" id="audData"/></div>
-    <div class="form-group"><label>Horário</label><input type="time" id="audHora"/></div>
-    <div class="form-group"><label>Local</label><input type="text" id="audLocal" placeholder="Ex: Sala de ensaio B"/></div>
+    <div class="form-group"><label>Data *</label><input type="date" id="audData" required/></div>
+    <div class="form-group"><label>Horário *</label><input type="time" id="audHora" required/></div>
+    <div class="form-group"><label>Local *</label><input type="text" id="audLocal" placeholder="Ex: Sala de ensaio B" required/></div>
     <div class="modal-footer">
       <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
       <button class="btn-primary sm" onclick="confirmarAgendamento('${id}')">Confirmar</button>
@@ -905,16 +1017,18 @@ function openModalAgendar(id) {
 }
 
 async function confirmarAgendamento(id) {
+  const data   = document.getElementById('audData').value;
+  const horario = document.getElementById('audHora').value;
+  const local  = document.getElementById('audLocal').value.trim();
+  if (!data)   { showToast('Informe a data da audição', 'error'); return; }
+  if (!horario){ showToast('Informe o horário', 'error'); return; }
+  if (!local)  { showToast('Informe o local', 'error'); return; }
+
   showLoading(true);
-  const res = await api('agendarAudicao', {
-    id,
-    dataAudicao: document.getElementById('audData').value,
-    horario: document.getElementById('audHora').value,
-    local: document.getElementById('audLocal').value,
-  });
+  const res = await api('agendarAudicao', { id, dataAudicao: data, horario, local });
   showLoading(false);
   if (!res.ok) { showToast(res.error || 'Erro', 'error'); return; }
-  showToast('Audição agendada! Notifique via WhatsApp. 📱', 'success');
+  showToast('Audição agendada! ✅', 'success');
   closeModalDirect();
   closeDetail();
   await loadAdmInscricoes();
@@ -932,6 +1046,123 @@ async function aprovarInscricao(id, tipo) {
   showToast(msg, tipo === 'aprovado' ? 'success' : 'info');
   closeDetail();
   await loadAdmInscricoes();
+}
+
+// Músico detail com geração de token inline
+let _admMusicosList_data = [];
+
+async function openDetailMusico(id) {
+  showLoading(true);
+  const [resMusicos, resTokens] = await Promise.all([api('getMusicos'), api('getTokens')]);
+  showLoading(false);
+
+  const list = resMusicos.ok ? resMusicos.data : [];
+  const m = list.find(x => (field(x,'Id','id')) === id);
+  if (!m) { showToast('Músico não encontrado', 'error'); return; }
+
+  const tokens = resTokens.ok ? resTokens.data : [];
+  const tokenExistente = tokens.find(t => String(t.MusicoId||t.musicoId) === String(id));
+
+  const nome  = field(m,'Nome','nome') || '—';
+  const ekl   = field(m,'Eklesia','eklesia') || '—';
+  const wa    = field(m,'WhatsApp','whatsapp','Whatsapp') || '';
+  const instr = field(m,'Instrumentos','instrumentos') || '';
+  const banda = field(m,'Banda','banda') || 'Sem banda';
+  const lider = field(m,'IsLider','isLider','islider') === 'sim';
+  const fotoUrl = field(m,'FotoUrl','fotoUrl','fotourl') || '';
+
+  document.getElementById('detailTitle').textContent = nome;
+  document.getElementById('detailBody').innerHTML = `
+    <div style="text-align:center;margin-bottom:20px">
+      ${fotoUrl
+        ? `<img src="${fotoUrl}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:10px"/>`
+        : `<div class="avatar lg" style="margin:0 auto 10px">${nome[0]||'?'}</div>`
+      }
+      <h2 style="font-family:var(--fhead);font-size:20px;font-weight:800">${nome}</h2>
+      <p style="color:var(--text2);font-size:13px">${ekl}</p>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-item"><label>WhatsApp</label><span>${wa||'—'}</span></div>
+      <div class="info-item"><label>Instrumentos</label><span>${instr||'—'}</span></div>
+      <div class="info-item"><label>Banda</label><span>${banda}</span></div>
+      <div class="info-item"><label>Perfil</label><span>${lider ? '<span class="role-tag">Líder</span>' : '<span class="role-tag" style="background:rgba(52,211,153,.2);color:var(--green)">Voluntário</span>'}</span></div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Perfil de acesso</h3>
+      ${tokenExistente ? `
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:6px">TOKEN GERADO</div>
+          <div style="font-family:monospace;font-size:16px;font-weight:700;color:var(--accent2);letter-spacing:1px">${tokenExistente.Token||tokenExistente.token}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokenExistente.Nivel||tokenExistente.nivel} • Token imutável</div>
+        </div>
+        <a class="btn-whats" href="${waLink(wa, 'Seu token de acesso ao sistema Bandas IC: *' + (tokenExistente.Token||tokenExistente.token) + '*%0AAcesse: https://30semanas.github.io/bandasIC')}" target="_blank">💬 Enviar token por WhatsApp</a>
+      ` : `
+        <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Este músico ainda não tem token de acesso. Defina o perfil e gere agora:</p>
+        <div class="form-group" style="margin-bottom:12px">
+          <label>Perfil de acesso</label>
+          <select id="musicoNivel">
+            <option value="voluntario">🎵 Voluntário</option>
+            ${lider ? '<option value="lider" selected>🎸 Líder de Banda</option>' : '<option value="lider">🎸 Líder de Banda</option>'}
+          </select>
+        </div>
+        <button class="btn-primary sm" onclick="gerarTokenMusico('${id}','${nome}','${ekl}','${wa}')">🔑 Gerar token agora</button>
+      `}
+    </div>
+
+    ${!lider ? `
+    <div class="detail-section">
+      <h3>Promover a líder</h3>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Isso permitirá que ele gerencie bandas.</p>
+      <button class="btn-ghost sm" onclick="openModalPromoverLiderDireto('${id}','${nome}')">⭐ Promover a líder</button>
+    </div>` : ''}
+
+    <div class="detail-section">
+      <h3>Contato</h3>
+      <a class="btn-whats" href="${waLink(wa,'')}" target="_blank">💬 Abrir WhatsApp</a>
+    </div>
+  `;
+  openDetail();
+}
+
+async function gerarTokenMusico(musicoId, nome, eklesia, wa) {
+  const nivel = document.getElementById('musicoNivel')?.value || 'voluntario';
+  showLoading(true);
+  const res = await api('gerarToken', { nome, eklesia, nivel, musicoId });
+  showLoading(false);
+  if (!res.ok) { showToast(res.error || 'Erro', 'error'); return; }
+  showToast(`Token gerado: ${res.token} ✅`, 'success');
+  // Reabrir detail atualizado
+  closeDetail();
+  setTimeout(() => openDetailMusico(musicoId), 400);
+}
+
+function openModalPromoverLiderDireto(musicoId, nome) {
+  _pendingAction = { type: 'promoverDireto', musicoId };
+  openModal('⭐ Promover a Líder', `
+    <p style="font-size:15px;color:var(--text2);text-align:center;padding:12px 0;line-height:1.7">
+      Promover <strong style="color:var(--accent2)">${nome}</strong> a líder de banda?<br/>
+      <span style="font-size:12px;color:var(--text3)">O token dele precisará ser do nível "Líder".</span>
+    </p>
+    <div class="modal-footer" style="justify-content:center;gap:12px">
+      <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
+      <button class="btn-primary sm" onclick="executarPromoverDireto()">⭐ Confirmar</button>
+    </div>`);
+}
+
+async function executarPromoverDireto() {
+  if (!_pendingAction || _pendingAction.type !== 'promoverDireto') return;
+  const { musicoId } = _pendingAction;
+  _pendingAction = null;
+  closeModalDirect();
+  showLoading(true);
+  const res = await api('promoverLider', { musicoId });
+  showLoading(false);
+  if (!res.ok) { showToast(res.error || 'Erro', 'error'); return; }
+  showToast('Músico promovido a líder! ⭐', 'success');
+  closeDetail();
+  await loadAdmMusicos();
 }
 
 // MÚSICOS
@@ -970,16 +1201,23 @@ async function loadAdmBandas() {
   _admBandas = res.ok ? res.data : [];
   const el = document.getElementById('admBandasList');
   if (!_admBandas.length) { el.innerHTML = emptyState('🎸','Nenhuma banda'); return; }
-  el.innerHTML = _admBandas.map(b => `
+  el.innerHTML = _admBandas.map(b => {
+    const bid  = b.Id  || b.id  || '';
+    const nome = b.Nome || b.nome || '—';
+    const lider = b.LiderNome || b.liderNome || '—';
+    const emoji = b.Emoji || b.emoji || '🎸';
+    return `
     <div class="card">
       <div class="card-head">
-        <div style="font-size:30px">${b.Emoji||'🎸'}</div>
-        <div>
-          <div class="card-name">${b.Nome}</div>
-          <div class="card-sub">Líder: ${b.LiderNome}</div>
+        <div style="font-size:30px">${emoji}</div>
+        <div style="flex:1">
+          <div class="card-name">${nome}</div>
+          <div class="card-sub">Líder: ${lider}</div>
         </div>
+        <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confirmarRemoverBanda('${bid}','${nome}')">🗑</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function openModalCriarBanda() {
@@ -1008,6 +1246,33 @@ async function openModalCriarBanda() {
       <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
       <button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button>
     </div>`);
+}
+
+function confirmarRemoverBanda(id, nome) {
+  _pendingAction = { type: 'removeBanda', id };
+  openModal('🗑 Remover Banda', `
+    <p style="font-size:15px;color:var(--text2);text-align:center;padding:12px 0;line-height:1.7">
+      Tem certeza que deseja remover a banda<br/>
+      <strong style="color:var(--red);font-size:18px">${nome}</strong>?<br/>
+      <span style="font-size:12px;color:var(--text3)">Esta ação não pode ser desfeita.</span>
+    </p>
+    <div class="modal-footer" style="justify-content:center;gap:12px">
+      <button class="btn-ghost sm" onclick="closeModalDirect()">Cancelar</button>
+      <button class="btn-red" onclick="executarRemoverBanda()">🗑 Confirmar remoção</button>
+    </div>`);
+}
+
+async function executarRemoverBanda() {
+  if (!_pendingAction || _pendingAction.type !== 'removeBanda') return;
+  const { id } = _pendingAction;
+  _pendingAction = null;
+  closeModalDirect();
+  showLoading(true);
+  const res = await api('removerBanda', { id });
+  showLoading(false);
+  if (!res.ok) { showToast(res.error || 'Erro ao remover', 'error'); return; }
+  showToast('Banda removida!', 'success');
+  await loadAdmBandas();
 }
 
 async function salvarBanda() {
@@ -1283,6 +1548,33 @@ function showToast(msg, type = 'info') {
 }
 
 // ==================== HELPERS ====================
+
+// Busca campo em objeto ignorando maiúsculas/minúsculas
+// Prioridade: exato > capitalizado > minúsculo
+// Normaliza horário vindo do Sheets (pode ser decimal ou ISO)
+function normHorario(val) {
+  if (!val) return '';
+  const s = String(val);
+  if (s.includes('T')) return s.split('T')[1].substring(0,5);
+  if (!isNaN(val) && Number(val) < 1) {
+    const min = Math.round(Number(val) * 24 * 60);
+    return String(Math.floor(min/60)).padStart(2,'0') + ':' + String(min%60).padStart(2,'0');
+  }
+  return s.substring(0,5);
+}
+
+function field(obj, ...keys) {
+  if (!obj) return '';
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== '') return obj[key];
+    const low = key.toLowerCase();
+    if (obj[low] !== undefined && obj[low] !== null && obj[low] !== '') return obj[low];
+    const cap = key.charAt(0).toUpperCase() + key.slice(1);
+    if (obj[cap] !== undefined && obj[cap] !== null && obj[cap] !== '') return obj[cap];
+  }
+  return '';
+}
+
 function parseDate(str) {
   if (!str) return { day:'—', mon:'—', year:'—' };
   const d = new Date(str.includes('T') ? str : str + 'T12:00:00');
