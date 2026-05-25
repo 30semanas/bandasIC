@@ -14,23 +14,19 @@ const _e=[
 
 async function api(action, data = {}) {
   const url = atob(_e);
-  const session = getSession();
-  const payload = { action, sessionKey: session?.sessionKey || '', ...data };
+  const sess = getSession();
+  const payload = { action, sessionKey: sess?.sessionKey || '', ...data };
 
   return new Promise((resolve) => {
-    // Usa callback JSONP — único método que funciona com Apps Script sem servidor proxy
-    const cbName = '_cb_' + Math.random().toString(36).substring(2, 9);
+    const cbName = '_cb_' + Math.random().toString(36).slice(2, 9);
     const u = new URL(url);
     Object.entries(payload).forEach(([k, v]) => {
-      u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+      u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v === undefined ? '' : v));
     });
     u.searchParams.set('callback', cbName);
 
     const script = document.createElement('script');
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve({ ok: false, error: 'Tempo de resposta esgotado' });
-    }, 15000);
+    const timer = setTimeout(() => { cleanup(); resolve({ ok: false, error: 'Timeout' }); }, 15000);
 
     function cleanup() {
       clearTimeout(timer);
@@ -38,16 +34,8 @@ async function api(action, data = {}) {
       if (script.parentNode) script.parentNode.removeChild(script);
     }
 
-    window[cbName] = (result) => {
-      cleanup();
-      resolve(result);
-    };
-
-    script.onerror = () => {
-      cleanup();
-      resolve({ ok: false, error: 'Erro de conexão' });
-    };
-
+    window[cbName] = (result) => { cleanup(); resolve(result); };
+    script.onerror = () => { cleanup(); resolve({ ok: false, error: 'Erro de rede' }); };
     script.src = u.toString();
     document.head.appendChild(script);
   });
