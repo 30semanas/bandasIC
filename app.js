@@ -697,38 +697,90 @@ async function detMusico(id){
 }
 
 async function salvarEdMusico(id) {
-  const nivel = document.getElementById('edNivel').value;
+  const nivel  = document.getElementById('edNivel').value;
+  const nome   = document.getElementById('edNome').value.trim();
+  const ekl    = document.getElementById('edEkl').value.trim();
+  const whats  = document.getElementById('edWa').value.trim();
+  const instr  = document.getElementById('edInstr').value.trim();
+  const banda  = document.getElementById('edBanda').value.trim();
+  const isLider = nivel === 'lider' ? 'sim' : 'nao';
+
   load(true);
+
+  // 1. Salvar dados do músico
   const r = await api('editarMusico', {
-    id,
-    nome:         document.getElementById('edNome').value.trim(),
-    eklesia:      document.getElementById('edEkl').value.trim(),
-    whatsapp:     document.getElementById('edWa').value.trim(),
-    instrumentos: document.getElementById('edInstr').value.trim(),
-    banda:        document.getElementById('edBanda').value.trim(),
-    isLider:      nivel === 'lider' ? 'sim' : 'nao',
+    id, nome, eklesia: ekl, whatsapp: whats,
+    instrumentos: instr, banda, isLider,
   });
-  if (nivel === 'lider') await api('promoverLider',{musicoId:id});
+
+  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar', 'err'); return; }
+
+  // 2. Atualizar IsLider no músico
+  if (nivel === 'lider') {
+    await api('promoverLider', { musicoId: id });
+  }
+
+  // 3. Se tem token, atualizar nível do token existente
+  const rToks = await api('getTokens');
+  const toks  = rToks.ok ? rToks.data : [];
+  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
+
+  if (tokEx) {
+    // Atualiza nível do token existente (não cria novo)
+    const rNiv = await api('atualizarNivelToken', { musicoId: id, nivel });
+    if (rNiv.ok) {
+      toast('Dados salvos! Nível do token atualizado para ' + (nivel === 'lider' ? 'Líder' : 'Voluntário') + ' ✅', 'ok');
+    } else {
+      toast('Dados salvos! ' + (rNiv.error || ''), 'ok');
+    }
+  } else {
+    toast('Dados salvos! ✅', 'ok');
+  }
+
   load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Dados atualizados! ✅','ok');
   closeD();
   await loadMusicos();
 }
 
 async function gerarTokMusico(id) {
   const m = _aMusicos.find(x => x.Id === id);
-  if (!m) { toast('Músico não encontrado','err'); return; }
+  if (!m) { toast('Músico não encontrado', 'err'); return; }
   const nivel = document.getElementById('edNivel')?.value || 'voluntario';
+
+  // Verificar se já tem token
+  const rT = await api('getTokens');
+  const toks = rT.ok ? rT.data : [];
+  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
+
+  if (tokEx) {
+    // Já tem token — atualizar nível
+    load(true);
+    const r = await api('atualizarNivelToken', { musicoId: id, nivel });
+    if (nivel === 'lider') await api('promoverLider', { musicoId: id });
+    load(false);
+    toast('Nível do token atualizado para ' + (nivel === 'lider' ? 'Líder' : 'Voluntário') + ' ✅', 'ok');
+    closeD();
+    await loadMusicos();
+    setTimeout(() => detMusico(id), 400);
+    return;
+  }
+
+  // Gerar novo token
   load(true);
-  const r = await api('gerarToken',{nome:m.Nome||'',eklesia:m.Eklesia||'',nivel,musicoId:id});
-  if (nivel === 'lider') await api('promoverLider',{musicoId:id});
+  const r = await api('gerarToken', {
+    nome: m.Nome || '',
+    eklesia: m.Eklesia || '',
+    nivel,
+    musicoId: id,
+  });
+  if (nivel === 'lider') await api('promoverLider', { musicoId: id });
   load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Token: '+r.token+' ✅','ok');
+
+  if (!r.ok) { toast(r.error || 'Erro', 'err'); return; }
+  toast('Token gerado: ' + r.token + ' ✅', 'ok');
   closeD();
   await loadMusicos();
-  setTimeout(()=>detMusico(id),500);
+  setTimeout(() => detMusico(id), 400);
 }
 
 async function gerarTokMusico(mid,nome,ekl,wa_num){
