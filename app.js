@@ -133,7 +133,40 @@ function vtab(id, el){ document.querySelectorAll('#sVol .tab').forEach(t=>t.clas
 
 function fvesc(f,el){ _vEscFilter=f; document.querySelectorAll('#vEsc .ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderVEsc(); }
 
+function renderVEscInEl(elId) {
+  const targetEl = document.getElementById(elId);
+  if (!targetEl) return;
+  const now = new Date();
+  let list = _vEscFilter==='todas' ? [..._vEscalas] : _vEscalas.filter(e=>(e.meuStatus||'pendente')===_vEscFilter);
+  list.sort((a,b)=>{
+    const dA=new Date((a.Data||'9999')+'T12:00:00'), dB=new Date((b.Data||'9999')+'T12:00:00');
+    const stA=a.meuStatus||'pendente', stB=b.meuStatus||'pendente';
+    const pA=dA<now, pB=dB<now;
+    if(stA==='pendente'&&!pA&&(stB!=='pendente'||pB)) return -1;
+    if(stB==='pendente'&&!pB&&(stA!=='pendente'||pA)) return 1;
+    if(!pA&&pB) return -1; if(pA&&!pB) return 1;
+    return dA-dB;
+  });
+  if(!list.length){targetEl.innerHTML=empty('📅','Nenhuma escala');return;}
+  targetEl.innerHTML=list.map(e=>{
+    const id=e.Id||e.id||'', titulo=e.Titulo||e.titulo||'Escala';
+    const horario=e.Horario||e.horario||'', local=e.Local||e.local||'';
+    const d=pd(e.Data||e.data||''), isPast=e.Data&&new Date(e.Data+'T12:00:00')<now;
+    const st=e.meuStatus||'pendente';
+    return `<div class="li" onclick="detEscVol('${id}')" style="${isPast?'opacity:.75':''}">
+      <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
+      <div class="li-info"><div class="li-name">${titulo} ${isPast?'<span style="font-size:10px;color:var(--text3)">(passada)</span>':''}</div><div class="li-sub">⏰ ${horario} • 📍 ${local}</div></div>
+      <div class="li-r">${badge(st)}</div>
+    </div>`;
+  }).join('');
+}
+
 function renderVEsc(){
+  const el=document.getElementById('vEscList');
+  if(el) renderVEscInEl('vEscList');
+}
+
+function 
   const now = new Date();
   let list = _vEscFilter==='todas' ? [..._vEscalas] : _vEscalas.filter(e=>(e.meuStatus||'pendente')===_vEscFilter);
   list.sort((a,b)=>{
@@ -213,24 +246,47 @@ function renderVSubs(subs){
 let _lBandas=[], _lMusicas=[];
 
 async function initLider(sess){
-  document.getElementById('lNome').textContent=sess.nome;
-  document.getElementById('lEkl').textContent=sess.eklesia;
+  document.getElementById('lNome').textContent = sess.nome;
+  document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
   load(true);
-  const [rB,rE,rM] = await Promise.all([api('getMinhasBandas'), api('getEscalas'), api('getMusicas')]);
+  const [rB, rE, rM, rME] = await Promise.all([
+    api('getMinhasBandas'),
+    api('getEscalas'),
+    api('getMusicas'),
+    api('getMinhasEscalas'), // escalas pessoais do líder como voluntário
+  ]);
   load(false);
-  _lBandas=rB.ok?rB.data:[];
-  _lMusicas=rM.ok?rM.data:[];
+  _lBandas  = rB.ok  ? rB.data  : [];
+  _lMusicas = rM.ok  ? rM.data  : [];
+  _vEscalas = rME.ok ? rME.data : []; // reutiliza variável do voluntário
+
   renderLBandas();
-  renderLEsc(rE.ok?rE.data:[]);
+  renderLEsc(rE.ok ? rE.data : []);
   renderLMus();
-  const rRep=await api('getRepertorios');
-  renderLRep(rRep.ok?rRep.data:[]);
-  const rSubs=await api('getSubs');
-  renderLSubs(rSubs.ok?rSubs.data:[]);
+
+  // Renderizar escalas pessoais do líder na tab "Minhas Escalas"
+  const lMEEl = document.getElementById('lMinhasEsc');
+  if (lMEEl) {
+    _vEscFilter = 'todas';
+    // Renderizar igual ao voluntário
+    renderVEscInEl('lMinhasEscList');
+  }
+
+  const rRep  = await api('getRepertorios');
+  renderLRep(rRep.ok ? rRep.data : []);
+  const rSubs = await api('getSubs');
+  renderLSubs(rSubs.ok ? rSubs.data : []);
 }
 
-function ltab(id,el){ document.querySelectorAll('#sLid .tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active')); el.classList.add('active'); document.getElementById(id).classList.add('active'); }
+function ltab(id,el){
+  document.querySelectorAll('#sLid .tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(id).classList.add('active');
+  // Renderizar escalas pessoais quando tab for selecionada
+  if (id === 'lMinhasEsc') renderVEscInEl('lMinhasEscList');
+}
 
 function renderLBandas(){
   const el=document.getElementById('lBandasList');
@@ -633,22 +689,30 @@ async function loadMusicos(){
 
 async function detMusico(id){
   load(true);
-  const [rT] = await Promise.all([api('getTokens')]);
+  const [rT, rBandas] = await Promise.all([api('getTokens'), api('getBandas')]);
   load(false);
   const m = _aMusicos.find(x => x.Id === id);
   if (!m) { toast('Não encontrado','err'); return; }
 
-  const nome  = m.Nome  || '—';
-  const ekl   = m.Eklesia || '';
-  const whats = String(m.WhatsApp || '');
-  const instr = m.Instrumentos || '';
-  const banda = m.Banda || '';
-  const lider = m.IsLider === 'sim';
-  const foto  = m.FotoUrl || '';
-  const toks  = rT.ok ? rT.data : [];
-  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
-  const tokStr = tokEx ? (tokEx.Token || '') : '';
-  const tokNiv = tokEx ? (tokEx.Nivel || '') : '';
+  const nome    = m.Nome  || '—';
+  const ekl     = m.Eklesia || '';
+  const whats   = String(m.WhatsApp || '');
+  const instr   = m.Instrumentos || '';
+  const lider   = m.IsLider === 'sim';
+  const foto    = m.FotoUrl || '';
+  const toks    = rT.ok ? rT.data : [];
+  const tokEx   = toks.find(t => String(t.MusicoId) === String(id));
+  const tokStr  = tokEx ? (tokEx.Token || '') : '';
+  const tokNiv  = tokEx ? (tokEx.Nivel  || '') : '';
+
+  // Banda: buscar do cadastro de bandas onde o músico é membro
+  const bandas  = rBandas.ok ? rBandas.data : [];
+  const minhasBandas = bandas.filter(b => {
+    const mids = (b.MembrosIds || '').split(',').map(x => x.trim());
+    return mids.includes(id);
+  });
+  const bandaNomes = minhasBandas.map(b => b.Nome).join(', ') || 'Sem banda';
+
   const waNum = whats.replace(/\D/g,'');
   const msgToken = 'Olá, ' + nome + '! 🎵%0A%0ASeu token de acesso ao sistema *Bandas IC*:%0A%0A🔑 *' + tokStr + '*%0A%0AAcesse: https://30semanas.github.io/bandasIC%0A%0AEscolha *' + (tokNiv === 'lider' ? 'Líder de Banda' : 'Voluntário') + '* na tela inicial.';
 
@@ -659,6 +723,7 @@ async function detMusico(id){
       <h2 style="font-family:var(--fh);font-size:20px;font-weight:800">${nome}</h2>
       <p style="color:var(--text2);font-size:13px">${ekl||'—'}</p>
     </div>
+
     <div class="dsec">
       <h3>Dados do músico</h3>
       <div style="display:flex;flex-direction:column;gap:10px">
@@ -666,7 +731,11 @@ async function detMusico(id){
         <div class="fg"><label>Eklesia</label><input type="text" id="edEkl" value="${ekl}"/></div>
         <div class="fg"><label>WhatsApp</label><input type="text" id="edWa" value="${whats}"/></div>
         <div class="fg"><label>Instrumentos</label><input type="text" id="edInstr" value="${instr}" placeholder="Voz, Guitarra..."/></div>
-        <div class="fg"><label>Banda</label><input type="text" id="edBanda" value="${banda}" placeholder="Nome da banda"/></div>
+        <div class="fg">
+          <label>Banda(s)</label>
+          <input type="text" value="${bandaNomes}" disabled style="opacity:.6;cursor:not-allowed;background:var(--bg4)"/>
+          <span style="font-size:11px;color:var(--text3);margin-top:3px">Gerenciado pelo administrador em Bandas</span>
+        </div>
         <div class="fg"><label>Perfil de acesso</label>
           <select id="edNivel">
             <option value="voluntario" ${!lider?'selected':''}>🎵 Voluntário</option>
@@ -676,13 +745,14 @@ async function detMusico(id){
         <button class="btn-primary sm" onclick="salvarEdMusico('${id}')">💾 Salvar alterações</button>
       </div>
     </div>
+
     <div class="dsec">
       <h3>Token de acesso</h3>
       ${tokEx ? `
         <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN ATUAL</div>
           <div style="font-family:monospace;font-size:18px;font-weight:700;color:var(--accent2);letter-spacing:2px">${tokStr}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokNiv} • Imutável</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokNiv}</div>
         </div>
         <div class="arow">
           <a class="btn-wa" href="https://wa.me/55${waNum}?text=${msgToken}" target="_blank">💬 Notificar no WhatsApp</a>
@@ -702,38 +772,44 @@ async function salvarEdMusico(id) {
   const ekl     = document.getElementById('edEkl').value.trim();
   const whats   = document.getElementById('edWa').value.trim();
   const instr   = document.getElementById('edInstr').value.trim();
-  const banda   = document.getElementById('edBanda').value.trim();
   const isLider = nivel === 'lider' ? 'sim' : 'nao';
 
   load(true);
 
   // 1. Salvar dados do músico
   const r = await api('editarMusico', {
-    id, nome, eklesia: ekl, whatsapp: whats,
-    instrumentos: instr, banda, isLider,
+    id, nome, eklesia: ekl, whatsapp: whats, instrumentos: instr, isLider,
   });
 
-  if (!r.ok) {
+  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar', 'err'); return; }
+
+  // 2. Promover IsLider se necessário
+  if (isLider === 'sim') await api('promoverLider', { musicoId: id });
+
+  // 3. Verificar token atual
+  const rT = await api('getTokens');
+  const toks = rT.ok ? rT.data : [];
+  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
+
+  if (!tokEx) {
+    // Sem token: gerar novo com o nível escolhido
+    const rG = await api('gerarToken', { nome, eklesia: ekl, nivel, musicoId: id });
     load(false);
-    toast(r.error || 'Erro ao salvar', 'err');
-    return;
-  }
-
-  // 2. Promover/rebaixar IsLider
-  if (isLider === 'sim') {
-    await api('promoverLider', { musicoId: id });
-  }
-
-  // 3. Atualizar nível do token (busca por musicoId OU por nome)
-  const rNiv = await api('atualizarNivelToken', { musicoId: id, nivel, nome });
-
-  load(false);
-
-  if (rNiv.ok) {
-    toast('Salvo! Nível → ' + (nivel === 'lider' ? '🎸 Líder' : '🎵 Voluntário') + ' ✅', 'ok');
+    if (rG.ok) toast('Dados salvos! Token gerado: ' + rG.token + ' ✅', 'ok');
+    else toast('Dados salvos! Erro ao gerar token: ' + (rG.error||''), 'ok');
+  } else if ((tokEx.Nivel || '') !== nivel) {
+    // Token existe com nível diferente: atualizar nível do token existente
+    const rN = await api('atualizarNivelToken', { musicoId: id, nivel, nome });
+    load(false);
+    const novoTok = tokEx.Token || '';
+    if (rN.ok) {
+      toast('Perfil atualizado para ' + (nivel==='lider'?'🎸 Líder':'🎵 Voluntário') + '! Token: ' + novoTok + ' ✅', 'ok');
+    } else {
+      toast('Dados salvos! ' + (rN.error||''), 'info');
+    }
   } else {
-    // Token não existe ainda — apenas salvar dados
-    toast('Dados salvos! ✅ (Token ainda não gerado)', 'ok');
+    load(false);
+    toast('Dados salvos! ✅', 'ok');
   }
 
   closeD();
@@ -806,33 +882,95 @@ async function loadBandas(){
 }
 
 async function modalCriarBanda(){
-  load(true); const rL=await api('getLideres'); load(false);
-  const lids=rL.ok?rL.data:[];
-  openM('Nova Banda',`
+  load(true);
+  const [rL, rM] = await Promise.all([api('getLideres'), api('getMusicos')]);
+  load(false);
+  const lids = rL.ok ? rL.data : [];
+  const mus  = rM.ok ? rM.data : [];
+
+  openM('Nova Banda', `
     <div class="fg"><label>Nome da banda *</label><input type="text" id="bNome"/></div>
     <div class="fg"><label>Líder *</label>
-      <select id="bLidId">
+      <select id="bLidId" onchange="">
         <option value="">— Selecione —</option>
-        ${lids.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
+        ${lids.map(m => `<option value="${m.Id}" data-nome="${m.Nome||''}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
       </select>
-      ${!lids.length?'<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder. Promova um músico primeiro.</p>':''}
+      ${!lids.length ? '<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder. Promova um músico primeiro.</p>' : ''}
     </div>
     <div class="fg"><label>Emoji</label><input type="text" id="bEmoji" value="🎸" maxlength="2"/></div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button></div>`);
+
+    <div class="dsec" style="margin-top:8px">
+      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES</h3>
+      <div id="bMembros" style="display:flex;flex-direction:column;gap:8px"></div>
+      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegrante()">+ Adicionar integrante</button>
+    </div>
+
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button>
+    </div>`);
+
+  // Salvar músicos para usar na seleção de integrantes
+  window._bandaMusicos = mus;
+}
+
+function addLinhaIntegrante() {
+  const mus = window._bandaMusicos || [];
+  const instrList = [...new Set(mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
+  const container = document.getElementById('bMembros');
+  const idx = container.children.length;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <select class="bi-instr" onchange="filtrarMusBanda(this,${idx})" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
+      <option value="">Instrumento...</option>
+      ${instrList.map(i=>`<option value="${i}">${i}</option>`).join('')}
+    </select>
+    <select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
+      <option value="">— Selecione instrumento —</option>
+    </select>
+    <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px">✕</button>`;
+  container.appendChild(div);
+}
+
+function filtrarMusBanda(sel, idx) {
+  const instr = sel.value;
+  const mus = (window._bandaMusicos || []).filter(m =>
+    (m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr)
+  );
+  const row = sel.parentElement;
+  const musSel = row.querySelector('.bi-musico');
+  musSel.innerHTML = `<option value="">— Selecione músico —</option>` +
+    mus.map(m => `<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
 }
 
 async function salvarBanda(){
-  const sel=document.getElementById('bLidId');
-  const nome=document.getElementById('bNome').value.trim();
-  const lidId=sel.value;
-  const lidNome=sel.options[sel.selectedIndex]?.dataset?.nome||'';
-  if(!nome){toast('Informe o nome','err');return;}
-  if(!lidId){toast('Selecione um líder','err');return;}
+  const sel = document.getElementById('bLidId');
+  const nome = document.getElementById('bNome').value.trim();
+  const lidId = sel.value;
+  const lidNome = sel.options[sel.selectedIndex]?.dataset?.nome || '';
+  if (!nome) { toast('Informe o nome','err'); return; }
+  if (!lidId) { toast('Selecione um líder','err'); return; }
+
+  // Coletar integrantes selecionados
+  const membrosIds = [...document.querySelectorAll('#bMembros .bi-musico')]
+    .map(s => s.value).filter(Boolean);
+  // Incluir líder como membro também
+  if (lidId && !membrosIds.includes(lidId)) membrosIds.unshift(lidId);
+
   load(true);
-  const r=await api('criarBanda',{nome,liderNome:lidNome,liderMusicoId:lidId,emoji:document.getElementById('bEmoji').value||'🎸'});
+  const r = await api('criarBanda', {
+    nome,
+    liderNome: lidNome,
+    liderMusicoId: lidId,
+    emoji: document.getElementById('bEmoji').value || '🎸',
+    membrosIds,
+  });
   load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Banda criada!','ok'); closeM(); await loadBandas();
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Banda criada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
+  closeM();
+  await loadBandas();
 }
 
 function confRemBanda(id,nome){
