@@ -31,6 +31,21 @@ function clearSess(){ sessionStorage.removeItem('bic'); }
 // ===== NAV =====
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); window.scrollTo(0,0); }
 
+// Navegar para tela de login (chamada pelos botões da home)
+function irLogin(title, nivel) {
+  _loginNivel = nivel;
+  const el = document.getElementById('loginTitle');
+  if (el) el.textContent = title || 'Acessar';
+  const tok = document.getElementById('iToken');
+  if (tok) tok.value = '';
+  // Esconder todas as telas
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  // Mostrar tela de login
+  const login = document.getElementById('sLogin');
+  if (login) login.classList.add('active');
+  window.scrollTo(0, 0);
+}
+
 function showLogin(title, nivel){
   _loginNivel = nivel;
   document.getElementById('loginTitle').textContent = title || 'Acessar';
