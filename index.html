@@ -191,7 +191,7 @@
         <span class="nlabel">Eventos</span>
         <a class="ni" onclick="apg('celebracoes')" data-p="celebracoes">✨ Celebrações</a>
         <a class="ni" onclick="apg('escalas')" data-p="escalas">📅 Escalas</a>
-        <a class="ni" onclick="apg('musicas')" data-p="musicas">🎼 Músicas</a>
+        <a class="ni" onclick="apg('repertorios')" data-p="repertorios">📋 Repertórios</a>
         <span class="nlabel">Sistema</span>
         <a class="ni" onclick="apg('tokens')" data-p="tokens">🔑 Tokens</a>
       </nav>
@@ -238,8 +238,13 @@
         <div class="pg-head"><h1>Escalas</h1></div>
         <div id="admEscList" class="lc"></div>
       </div>
-      <div id="ap-musicas" class="ap">
-        <div class="pg-head"><h1>Músicas</h1><button class="btn-primary sm" onclick="modalAdicionarMusica()">+ Adicionar</button></div>
+      <div id="ap-repertorios" class="ap">
+        <div class="pg-head"><h1>Repertórios</h1><button class="btn-primary sm" onclick="modalCriarRepertorioAdmin()">+ Novo repertório</button></div>
+        <div id="admRepList" class="lc" style="margin-bottom:24px"></div>
+        <div class="pg-head" style="margin-top:8px">
+          <h2 style="font-family:var(--fh);font-size:18px;font-weight:700">🎼 Biblioteca de Músicas</h2>
+          <button class="btn-primary sm" onclick="modalAdicionarMusica()">+ Adicionar música</button>
+        </div>
         <div id="admMusList2" class="cg"></div>
       </div>
       <div id="ap-tokens" class="ap">
