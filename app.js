@@ -134,14 +134,73 @@ async function initVol(sess){
   load(false);
   _vEscalas = rEsc.ok ? rEsc.data : [];
   renderVEsc();
-  // Banda
+
+  // Banda do voluntário
   const s = getSess();
-  const minhas = rBandas.ok ? rBandas.data.filter(b => b.MembrosIds && b.MembrosIds.includes(s.mid)) : [];
+  const todasBandas = rBandas.ok ? rBandas.data : [];
+  const minhasBandas = todasBandas.filter(b => {
+    const mids = (b.MembrosIds||'').split(',').map(x=>x.trim());
+    return mids.includes(s.mid);
+  });
+
   const bEl = document.getElementById('vBandaInfo');
-  bEl.innerHTML = minhas.length ? minhas.map(b=>`<div class="card"><div class="ch"><div style="font-size:28px">${b.Emoji||'🎸'}</div><div><div class="cn">${b.Nome}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div></div></div>`).join('') : empty('🎸','Sem banda vinculada');
+  if (!minhasBandas.length) {
+    bEl.innerHTML = empty('🎸','Sem banda vinculada');
+  } else {
+    let html = minhasBandas.map(b=>`
+      <div class="card" style="margin-bottom:12px">
+        <div class="ch"><div style="font-size:28px">${b.Emoji||'🎸'}</div>
+          <div><div class="cn">${b.Nome}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div>
+        </div>
+      </div>`).join('');
+
+    // Buscar celebrações e repertórios da banda
+    for (const banda of minhasBandas) {
+      const rCel = await api('getCelebracoesDaBanda', { bandaId: banda.Id });
+      const cels = rCel.ok ? rCel.data : [];
+      if (cels.length) {
+        html += `<div class="dsec"><h3>PRÓXIMAS CELEBRAÇÕES</h3>`;
+        html += cels.map(cel => {
+          const d = pd(cel.Data||'');
+          return `
+          <div class="card" style="margin-bottom:10px">
+            <div class="cn">${cel.Nome||'—'}</div>
+            <div class="cs">📅 ${d.day}/${d.mon}/${d.year} • ⏰ ${cel.Horario||''} • 📍 ${cel.Local||''}</div>
+            ${cel.musicas && cel.musicas.length ? `
+              <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+                <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📋 ${cel.repertorioNome||'Repertório'}</div>
+                ${cel.musicas.map((m,i)=>`
+                  <div class="li" style="margin-bottom:6px" onclick="detMusVoluntario('${m.Id||''}','${(m.Nome||'').replace(/'/g,'')}','${m.Tom||''}','${m.Bpm||''}','${(m.Youtube||'').replace(/'/g,'')}')">
+                    <div style="width:24px;height:24px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
+                    <div class="li-info"><div class="li-name">${m.Nome||'—'}</div><div class="li-sub">${m.Artista||''} • ${m.Versao||''}</div></div>
+                    <div style="display:flex;gap:6px;align-items:center">
+                      <span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--accent2);background:var(--bg4);padding:2px 8px;border-radius:5px">${m.Tom||''}</span>
+                      <span style="font-size:11px;color:var(--text3)">${m.Bpm||''}bpm</span>
+                    </div>
+                  </div>`).join('')}
+              </div>` : '<div style="font-size:12px;color:var(--text3);margin-top:8px">Sem repertório definido</div>'}
+          </div>`;
+        }).join('');
+        html += `</div>`;
+      }
+    }
+    bEl.innerHTML = html;
+  }
+
   // Subs
   const rSubs = await api('getSubs');
   renderVSubs(rSubs.ok ? rSubs.data : []);
+}
+
+function detMusVoluntario(id, nome, tom, bpm, youtube) {
+  document.getElementById('dTitle').textContent = nome;
+  document.getElementById('dBody').innerHTML = `
+    <div class="igrid">
+      <div class="ii"><label>Tom</label><span style="font-family:monospace;font-size:20px;color:var(--accent2)">${tom||'—'}</span></div>
+      <div class="ii"><label>BPM</label><span>${bpm||'—'}</span></div>
+    </div>
+    ${youtube?`<div class="dsec"><h3>Links</h3><a class="btn-primary sm" href="${youtube}" target="_blank" style="text-decoration:none">▶ YouTube</a></div>`:''}`;
+  openD();
 }
 
 function vtab(id, el){ document.querySelectorAll('#sVol .tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('#sVol .tc').forEach(t=>t.classList.remove('active')); el.classList.add('active'); document.getElementById(id).classList.add('active'); }
@@ -586,9 +645,9 @@ function detInsc(id){
         <button class="btn-green" onclick="confAprovar('${id}','aprovado','${nome.replace(/'/g,'')}')">✅ Aprovar</button>
         <button class="btn-red" onclick="confAprovar('${id}','reprovado','${nome.replace(/'/g,'')}')">❌ Reprovar</button>
         <button class="btn-wa" onclick="notifCand('${id}','${whats}','${waMsg}')">💬 Notificar</button>
-      `:`<a class="btn-wa" href="${wa(whats,'')}" target="_blank">💬 WhatsApp</a>`}
+      `:st==='aprovado'?'':`<a class="btn-wa" href="${wa(whats,'')}" target="_blank">💬 WhatsApp</a>`}
     </div></div>
-    ${st==='aprovado'?`<div class="dsec"><h3>Promover a líder</h3><button class="btn-ghost sm" onclick="confPromLid('','${nome.replace(/'/g,'')}')">⭐ Promover a líder</button></div>`:''}`;
+`;
   openD();
 }
 
@@ -868,53 +927,63 @@ async function loadBandas(){
       <div class="ch">
         <div style="font-size:28px">${b.Emoji||'🎸'}</div>
         <div style="flex:1"><div class="cn">${b.Nome||'—'}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div>
-        <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confRemBanda('${b.Id}','${(b.Nome||'').replace(/'/g,'')}')">🗑</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn-ghost sm" onclick="modalEditarBanda('${b.Id}')">✏️</button>
+          <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confRemBanda('${b.Id}','${(b.Nome||'').replace(/'/g,'')}')">🗑</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:8px">
+        ${(b.MembrosIds||'').split(',').filter(Boolean).length} integrante(s)
       </div>
     </div>`).join('');
 }
 
-async function modalCriarBanda(){
+async function modalEditarBanda(id) {
+  const b = _aBandas.find(x => x.Id === id);
+  if (!b) return;
   load(true);
   const [rL, rM] = await Promise.all([api('getLideres'), api('getMusicos')]);
   load(false);
   const lids = rL.ok ? rL.data : [];
   const mus  = rM.ok ? rM.data : [];
+  const memIds = (b.MembrosIds||'').split(',').filter(Boolean);
 
-  openM('Nova Banda', `
-    <div class="fg"><label>Nome da banda *</label><input type="text" id="bNome"/></div>
+  openM('Editar Banda', `
+    <div class="fg"><label>Nome *</label><input type="text" id="ebNome" value="${(b.Nome||'').replace(/"/g,'&quot;')}"/></div>
     <div class="fg"><label>Líder *</label>
-      <select id="bLidId" onchange="">
-        <option value="">— Selecione —</option>
-        ${lids.map(m => `<option value="${m.Id}" data-nome="${m.Nome||''}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
+      <select id="ebLidId">
+        ${lids.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}" ${m.Id===b.LiderMusicoId?'selected':''}>${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
       </select>
-      ${!lids.length ? '<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder. Promova um músico primeiro.</p>' : ''}
     </div>
-    <div class="fg"><label>Emoji</label><input type="text" id="bEmoji" value="🎸" maxlength="2"/></div>
-
+    <div class="fg"><label>Emoji</label><input type="text" id="ebEmoji" value="${b.Emoji||'🎸'}" maxlength="2"/></div>
     <div class="dsec" style="margin-top:8px">
-      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES</h3>
-      <div id="bMembros" style="display:flex;flex-direction:column;gap:8px"></div>
-      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegrante()">+ Adicionar integrante</button>
+      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES ATUAIS</h3>
+      <div id="ebMembros" style="display:flex;flex-direction:column;gap:6px">
+        ${memIds.map(mid => {
+          const mm = mus.find(x => x.Id === mid);
+          return mm ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg3);border-radius:8px">
+            <span style="flex:1;font-size:13px">${mm.Nome||'?'} — ${mm.Instrumentos||''}</span>
+            <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px" data-mid="${mid}">✕</button>
+          </div>` : '';
+        }).join('')}
+      </div>
+      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegranteEd()">+ Adicionar integrante</button>
     </div>
-
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button>
+      <button class="btn-primary sm" onclick="salvarEdicaoBanda('${id}')">💾 Salvar</button>
     </div>`);
-
-  // Salvar músicos para usar na seleção de integrantes
   window._bandaMusicos = mus;
 }
 
-function addLinhaIntegrante() {
+function addLinhaIntegranteEd() {
   const mus = window._bandaMusicos || [];
-  const instrList = [...new Set(mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
-  const container = document.getElementById('bMembros');
-  const idx = container.children.length;
+  const instrList = [...new Set(mus.flatMap(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
+  const container = document.getElementById('ebMembros');
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;gap:8px;align-items:center';
   div.innerHTML = `
-    <select class="bi-instr" onchange="filtrarMusBanda(this,${idx})" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
+    <select class="bi-instr" onchange="filtrarMusBandaEd(this)" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
       <option value="">Instrumento...</option>
       ${instrList.map(i=>`<option value="${i}">${i}</option>`).join('')}
     </select>
@@ -925,42 +994,31 @@ function addLinhaIntegrante() {
   container.appendChild(div);
 }
 
-function filtrarMusBanda(sel, idx) {
+function filtrarMusBandaEd(sel) {
   const instr = sel.value;
-  const mus = (window._bandaMusicos || []).filter(m =>
-    (m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr)
-  );
+  const mus = (window._bandaMusicos||[]).filter(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr));
   const row = sel.parentElement;
   const musSel = row.querySelector('.bi-musico');
-  musSel.innerHTML = `<option value="">— Selecione músico —</option>` +
-    mus.map(m => `<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
+  musSel.innerHTML = `<option value="">— Selecione —</option>` + mus.map(m=>`<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
 }
 
-async function salvarBanda(){
-  const sel = document.getElementById('bLidId');
-  const nome = document.getElementById('bNome').value.trim();
+async function salvarEdicaoBanda(id) {
+  const sel = document.getElementById('ebLidId');
+  const nome = document.getElementById('ebNome').value.trim();
   const lidId = sel.value;
-  const lidNome = sel.options[sel.selectedIndex]?.dataset?.nome || '';
+  const lidNome = sel.options[sel.selectedIndex]?.dataset?.nome||'';
   if (!nome) { toast('Informe o nome','err'); return; }
-  if (!lidId) { toast('Selecione um líder','err'); return; }
 
-  // Coletar integrantes selecionados
-  const membrosIds = [...document.querySelectorAll('#bMembros .bi-musico')]
-    .map(s => s.value).filter(Boolean);
-  // Incluir líder como membro também
-  if (lidId && !membrosIds.includes(lidId)) membrosIds.unshift(lidId);
+  // Coletar membros: existentes (não removidos) + novos selecionados
+  const existentes = [...document.querySelectorAll('#ebMembros button[data-mid]')].map(b=>b.dataset.mid);
+  const novos = [...document.querySelectorAll('#ebMembros .bi-musico')].map(s=>s.value).filter(Boolean);
+  const membrosIds = [...new Set([...existentes, ...novos, lidId].filter(Boolean))];
 
   load(true);
-  const r = await api('criarBanda', {
-    nome,
-    liderNome: lidNome,
-    liderMusicoId: lidId,
-    emoji: document.getElementById('bEmoji').value || '🎸',
-    membrosIds,
-  });
+  const r = await api('editarBanda', { id, nome, liderNome:lidNome, liderMusicoId:lidId, emoji:document.getElementById('ebEmoji').value||'🎸', membrosIds });
   load(false);
   if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Banda criada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
+  toast('Banda atualizada! ✅','ok');
   closeM();
   await loadBandas();
 }
@@ -987,16 +1045,96 @@ async function loadCel(){
   const el=document.getElementById('admCelList');
   if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
   list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
-  el.innerHTML=list.map(c=>{const d=pd(c.Data);return`
+  el.innerHTML=list.map(c=>{
+    const d=pd(c.Data);
+    return `
     <div class="card">
-      <div class="ch"><div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-        <div><div class="cn">${c.Nome||'—'}</div><div class="cs">⏰ ${c.Horario||''} • 📍 ${c.Local||''}</div></div>
+      <div class="ch">
+        <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
+        <div style="flex:1"><div class="cn">${c.Nome||'—'}</div><div class="cs">⏰ ${c.Horario||''} • 📍 ${c.Local||''}</div></div>
+        <button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>
       </div>
-      <div style="font-size:12px;color:var(--text2);margin-top:8px">Repertório: ${c.RepertorioTipo==='lider'?'🎸 Líder define':'⚙️ Admin define'}</div>
-    </div>`;}).join('');
+      <div style="font-size:12px;color:var(--text2);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
+        <span>🎸 ${c.BandasIds?'Banda vinculada':'Sem banda'}</span>
+        <span>📋 Repertório: ${c.RepertorioTipo==='lider'?'Líder define':'Admin define'}</span>
+      </div>
+      ${c.Obs?`<p style="font-size:12px;color:var(--text3);margin-top:6px">${c.Obs}</p>`:''}
+    </div>`; }).join('');
 }
 
-function modalCriarCel(){
+async function modalEditarCel(id) {
+  load(true);
+  const [rCel, rBandas, rRep] = await Promise.all([api('getCelebracoes'), api('getBandas'), api('getRepertorios',{})]);
+  load(false);
+  const list = rCel.ok ? rCel.data : [];
+  const c = list.find(x => x.Id === id);
+  if (!c) { toast('Não encontrado','err'); return; }
+  const bandas = rBandas.ok ? rBandas.data : [];
+  const reps   = rRep.ok   ? rRep.data   : [];
+  const celBandas = (c.BandasIds||'').split(',').filter(Boolean);
+
+  openM('Editar Celebração', `
+    <div class="fg"><label>Nome *</label><input type="text" id="ecNome" value="${(c.Nome||'').replace(/"/g,'&quot;')}"/></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="fg"><label>Data *</label><input type="date" id="ecDt" value="${c.Data||''}"/></div>
+      <div class="fg"><label>Horário *</label><input type="time" id="ecHr" value="${c.Horario||''}"/></div>
+    </div>
+    <div class="fg"><label>Local *</label><input type="text" id="ecLoc" value="${(c.Local||'').replace(/"/g,'&quot;')}"/></div>
+    <div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${c.Obs||''}</textarea></div>
+    <div class="fg"><label>Banda vinculada</label>
+      <select id="ecBanda">
+        <option value="">— Sem banda —</option>
+        ${bandas.map(b=>`<option value="${b.Id}" ${celBandas.includes(b.Id)?'selected':''}>${b.Nome||'—'}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Repertório</label>
+      <select id="ecRep">
+        <option value="">— Sem repertório —</option>
+        ${reps.map(r=>`<option value="${r.Id}" ${c.RepertorioId===r.Id?'selected':''}>${r.Nome||'—'}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Quem define o repertório</label>
+      <select id="ecRepT">
+        <option value="admin" ${c.RepertorioTipo!=='lider'?'selected':''}>⚙️ Administrador define</option>
+        <option value="lider" ${c.RepertorioTipo==='lider'?'selected':''}>🎸 Líder de banda define</option>
+      </select>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarEdicaoCel('${id}')">💾 Salvar</button>
+    </div>`);
+}
+
+async function salvarEdicaoCel(id) {
+  const nome = document.getElementById('ecNome').value.trim();
+  const dt   = document.getElementById('ecDt').value;
+  const hr   = document.getElementById('ecHr').value;
+  const loc  = document.getElementById('ecLoc').value.trim();
+  if (!nome||!dt||!hr||!loc) { toast('Preencha os campos obrigatórios','err'); return; }
+  const bandaId = document.getElementById('ecBanda').value;
+  const repId   = document.getElementById('ecRep').value;
+  load(true);
+  const r = await api('editarCelebracao', {
+    id, nome, data:dt, horario:hr, local:loc,
+    obs: document.getElementById('ecObs').value,
+    bandasIds: bandaId ? [bandaId] : [],
+    repertorioId: repId,
+    repertorioTipo: document.getElementById('ecRepT').value,
+  });
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Celebração atualizada! ✅','ok');
+  closeM();
+  await loadCel();
+}
+
+async function modalCriarCel(){
+  load(true);
+  const [rBandas, rRep] = await Promise.all([api('getBandas'), api('getRepertorios',{})]);
+  load(false);
+  const bandas = rBandas.ok ? rBandas.data : [];
+  const reps   = rRep.ok   ? rRep.data   : [];
+
   openM('Nova Celebração',`
     <div class="fg"><label>Nome *</label><input type="text" id="cNome" placeholder="Ex: Culto Dominical"/></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -1005,20 +1143,46 @@ function modalCriarCel(){
     </div>
     <div class="fg"><label>Local *</label><input type="text" id="cLoc"/></div>
     <div class="fg"><label>Observações</label><textarea id="cObs" rows="2"></textarea></div>
-    <div class="fg"><label>Repertório</label>
-      <select id="cRepT"><option value="admin">⚙️ Administrador define</option><option value="lider">🎸 Líder de banda define</option></select>
+    <div class="fg"><label>Banda</label>
+      <select id="cBanda">
+        <option value="">— Sem banda —</option>
+        ${bandas.map(b=>`<option value="${b.Id}">${b.Nome||'—'}</option>`).join('')}
+      </select>
     </div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarCel()">Criar</button></div>`);
+    <div class="fg"><label>Repertório</label>
+      <select id="cRep">
+        <option value="">— Sem repertório —</option>
+        ${reps.map(r=>`<option value="${r.Id}">${r.Nome||'—'}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Quem define o repertório</label>
+      <select id="cRepT">
+        <option value="admin">⚙️ Administrador define</option>
+        <option value="lider">🎸 Líder de banda define</option>
+      </select>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarCel()">Criar</button>
+    </div>`);
 }
 
 async function salvarCel(){
-  const nome=document.getElementById('cNome').value.trim();
-  const dt=document.getElementById('cDt').value;
-  const hr=document.getElementById('cHr').value;
-  const loc=document.getElementById('cLoc').value.trim();
-  if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
+  const nome = document.getElementById('cNome').value.trim();
+  const dt   = document.getElementById('cDt').value;
+  const hr   = document.getElementById('cHr').value;
+  const loc  = document.getElementById('cLoc').value.trim();
+  if(!nome||!dt||!hr||!loc){toast('Preencha os campos obrigatórios','err');return;}
+  const bandaId = document.getElementById('cBanda').value;
+  const repId   = document.getElementById('cRep').value;
   load(true);
-  const r=await api('criarCelebracao',{nome,data:dt,horario:hr,local:loc,obs:document.getElementById('cObs').value,repertorioTipo:document.getElementById('cRepT').value,bandasIds:[]});
+  const r=await api('criarCelebracao',{
+    nome, data:dt, horario:hr, local:loc,
+    obs: document.getElementById('cObs').value,
+    bandasIds: bandaId ? [bandaId] : [],
+    repertorioId: repId,
+    repertorioTipo: document.getElementById('cRepT').value,
+  });
   load(false);
   if(!r.ok){toast(r.error||'Erro','err');return;}
   toast('Celebração criada!','ok'); closeM(); await loadCel();
