@@ -247,8 +247,8 @@ async function detEscVol(id){
   load(false);
   if(!r.ok){toast('Erro','err');return;}
   const e=r.data, d=pd(e.Data), s=getSess();
-  const meu=(r.aceites||[]).find(a=>a.MusicoId===s.mid);
-  const st=meu?.Status||'pendente';
+  const meu=(r.aceites||[]).find(a=>String(a.MusicoId)===String(s.mid));
+  const st=meu?.Status||meu?.status||'pendente';
   document.getElementById('dTitle').textContent=e.Titulo||'Escala';
   document.getElementById('dBody').innerHTML=`
     <div class="igrid">
@@ -263,16 +263,45 @@ async function detEscVol(id){
         <button class="btn-green" onclick="respEsc('${e.Id}','aceita')">✅ Aceitar</button>
         <button class="btn-red" onclick="respEsc('${e.Id}','recusada')">❌ Recusar</button>
       </div>
+      ${st==='recusada' && meu && meu.Justificativa ? `<div style="margin-top:12px;padding:10px;background:rgba(248,113,113,.1);border:1px solid var(--red);border-radius:8px"><p style="font-size:12px;color:var(--red);font-weight:600;margin-bottom:4px">Justificativa de recusa:</p><p style="font-size:13px;color:var(--text2)">${meu.Justificativa}</p></div>` : ''}
     </div>`;
   openD();
 }
 
 async function respEsc(escId, st){
+  if (st === 'recusada') {
+    // Mostrar campo de justificativa obrigatório
+    openM('Justificar recusa', `
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Por favor, informe o motivo da recusa:</p>
+      <div class="fg"><label>Justificativa *</label>
+        <textarea id="justTxt" rows="4" placeholder="Ex: Compromisso familiar, viagem, indisposição..."></textarea>
+      </div>
+      <div class="mfoot">
+        <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+        <button class="btn-red" onclick="confirmarRecusa('${escId}')">❌ Confirmar recusa</button>
+      </div>`);
+    return;
+  }
   load(true);
-  const r=await api('responderEscala',{escalaId:escId,status:st});
+  const r=await api('responderEscala',{escalaId:escId,status:st,justificativa:''});
   load(false);
   if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast(st==='aceita'?'Escala aceita! ✅':'Escala recusada','info');
+  toast('Escala aceita! ✅','ok');
+  closeD();
+  const rEsc=await api('getMinhasEscalas');
+  _vEscalas=rEsc.ok?rEsc.data:[];
+  renderVEsc();
+}
+
+async function confirmarRecusa(escId) {
+  const just = document.getElementById('justTxt').value.trim();
+  if (!just) { toast('A justificativa é obrigatória','err'); return; }
+  closeM();
+  load(true);
+  const r = await api('responderEscala',{escalaId:escId,status:'recusada',justificativa:just});
+  load(false);
+  if(!r.ok){toast(r.error||'Erro','err');return;}
+  toast('Escala recusada. Justificativa registrada.','info');
   closeD();
   const rEsc=await api('getMinhasEscalas');
   _vEscalas=rEsc.ok?rEsc.data:[];
@@ -389,7 +418,17 @@ async function detEscLid(id){
       <div class="ii"><label>Banda</label><span>${e.BandaNome||'—'}</span></div>
     </div>
     <div class="dsec"><h3>Aceites (${ac.length})</h3>
-      ${ac.length?`<div style="display:flex;flex-direction:column;gap:8px">${ac.map(a=>`<div class="li"><div class="li-info"><div class="li-name">${a.MusicoId}</div></div>${badge(a.Status||'pendente')}</div>`).join('')}</div>`:'<p style="font-size:13px;color:var(--text3)">Nenhum músico escalado</p>'}
+      ${ac.length?`<div style="display:flex;flex-direction:column;gap:8px">${ac.map(a=>{
+        const just=a.Justificativa||a.justificativa||'';
+        const st=a.Status||a.status||'pendente';
+        return `<div class="li" style="flex-direction:column;align-items:flex-start;gap:6px">
+          <div style="display:flex;align-items:center;gap:10px;width:100%">
+            <div class="li-info"><div class="li-name">${a.MusicoId}</div></div>
+            ${badge(st)}
+          </div>
+          ${just&&st==='recusada'?`<div style="font-size:12px;color:var(--red);padding:6px 10px;background:rgba(248,113,113,.1);border-radius:6px;width:100%">💬 "${just}"</div>`:''}
+        </div>`;
+      }).join('')}</div>`:'<p style="font-size:13px;color:var(--text3)">Nenhum músico escalado</p>'}
     </div>
     <div class="dsec"><h3>Ações</h3><div class="arow">
       <button class="btn-ghost sm" onclick="modalSub('${e.Id}')">🔄 Pedir sub</button>
@@ -540,6 +579,34 @@ async function salvarSub(escId){
 let _aInsc=[], _aInscFilter='todos', _aBandas=[], _aMusicos=[], _aMusicas=[];
 let _pendAct=null, _sideOpen=false;
 
+// ===== LÍDER DE EQUIPE =====
+async function initLiderEquipe(sess) {
+  // Líder de equipe usa o painel do admin mas com acesso restrito
+  document.getElementById('admNome').textContent = sess.nome;
+  document.getElementById('admAv').textContent = sess.nome[0]||'L';
+  document.getElementById('admTopAv').textContent = sess.nome[0]||'L';
+  document.getElementById('admGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'!';
+  show('sAdm');
+
+  // Esconder menus que lider de equipe não acessa
+  const hidePages = ['inscricoes','musicos','tokens'];
+  hidePages.forEach(p => {
+    const el = document.querySelector('.ni[data-p="'+p+'"]');
+    if (el) el.style.display = 'none';
+  });
+
+  // Carregar celebrações atribuídas a ele
+  await loadCel();
+  await loadBandas();
+  await loadEsc();
+
+  // Mostrar tela de escalas pessoais também
+  _vEscalas = [];
+  const rME = await api('getMinhasEscalas');
+  if (rME.ok) _vEscalas = rME.data;
+}
+
+
 async function initAdmin(sess){
   document.getElementById('admNome').textContent=sess.nome;
   document.getElementById('admAv').textContent=sess.nome[0]||'A';
@@ -552,6 +619,7 @@ async function initAdmin(sess){
 function toggleSide(){ _sideOpen=!_sideOpen; document.getElementById('admSide').classList.toggle('open',_sideOpen); }
 
 const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',repertorios:'Repertórios',tokens:'Tokens'};
+const nivelLabel = {master:'Master',liderequipe:'Líder de Equipe',liderbanda:'Líder de Banda',musico:'Músico',admin:'Administrador'};
 
 function apg(name){
   document.querySelectorAll('.ap').forEach(p=>p.classList.remove('active'));
@@ -1041,6 +1109,57 @@ async function salvarEdicaoBanda(id) {
   await loadBandas();
 }
 
+async function modalCriarBanda(){
+  load(true);
+  const [rL, rM] = await Promise.all([api('getLideres'), api('getMusicos')]);
+  load(false);
+  const lids = rL.ok ? rL.data : [];
+  const mus  = rM.ok ? rM.data : [];
+  window._bandaMusicos = mus;
+
+  openM('Nova Banda', `
+    <div class="fg"><label>Nome da banda *</label><input type="text" id="bNome"/></div>
+    <div class="fg"><label>Líder *</label>
+      <select id="bLidId">
+        <option value="">— Selecione um líder —</option>
+        ${lids.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
+      </select>
+      ${!lids.length ? '<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder disponível. Promova um músico a líder primeiro.</p>' : ''}
+    </div>
+    <div class="fg"><label>Emoji</label><input type="text" id="bEmoji" value="🎸" maxlength="2"/></div>
+    <div class="dsec" style="margin-top:4px">
+      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES</h3>
+      <div id="bMembros" style="display:flex;flex-direction:column;gap:8px"></div>
+      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegrante()">+ Adicionar integrante</button>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button>
+    </div>`);
+}
+
+async function salvarBanda(){
+  const sel = document.getElementById('bLidId');
+  const nome = document.getElementById('bNome').value.trim();
+  const lidId = sel.value;
+  const opt = sel.options[sel.selectedIndex];
+  const lidNome = opt ? (opt.dataset.nome || opt.text.split('—')[0].trim()) : '';
+  if (!nome) { toast('Informe o nome da banda','err'); return; }
+  if (!lidId) { toast('Selecione um líder','err'); return; }
+
+  const novos = [...document.querySelectorAll('#bMembros .bi-musico')].map(s=>s.value).filter(Boolean);
+  const membrosIds = [...new Set([lidId, ...novos].filter(Boolean))];
+
+  load(true);
+  const r = await api('criarBanda',{nome, liderNome:lidNome, liderMusicoId:lidId, emoji:document.getElementById('bEmoji').value||'🎸', membrosIds});
+  load(false);
+  if(!r.ok){toast(r.error||'Erro','err');return;}
+  toast('Banda criada com '+membrosIds.length+' integrante(s)! ✅','ok');
+  closeM();
+  await loadBandas();
+}
+
+
 function confRemBanda(id,nome){
   _pendAct={type:'remBanda',id};
   openM('🗑 Remover Banda',`
@@ -1152,10 +1271,11 @@ async function salvarEdicaoCel(id) {
 
 async function modalCriarCel(){
   load(true);
-  const [rBandas, rRep] = await Promise.all([api('getBandas'), api('getRepertorios',{})]);
+  const [rBandas, rRep, rLE] = await Promise.all([api('getBandas'), api('getRepertorios',{}), api('getLideresEquipe')]);
   load(false);
   const bandas = rBandas.ok ? rBandas.data : [];
   const reps   = rRep.ok   ? rRep.data   : [];
+  const lides  = rLE.ok    ? rLE.data    : [];
 
   openM('Nova Celebração',`
     <div class="fg"><label>Nome *</label><input type="text" id="cNome" placeholder="Ex: Culto Dominical"/></div>
@@ -1165,6 +1285,12 @@ async function modalCriarCel(){
     </div>
     <div class="fg"><label>Local *</label><input type="text" id="cLoc"/></div>
     <div class="fg"><label>Observações</label><textarea id="cObs" rows="2"></textarea></div>
+    <div class="fg"><label>Atribuir a Líder de Equipe</label>
+      <select id="cLiderEq">
+        <option value="">— Sem líder de equipe —</option>
+        ${lides.map(l=>`<option value="${l.Id}">${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
+      </select>
+    </div>
     <div class="fg"><label>Banda</label>
       <select id="cBanda">
         <option value="">— Sem banda —</option>
@@ -1179,7 +1305,7 @@ async function modalCriarCel(){
     </div>
     <div class="fg"><label>Quem define o repertório</label>
       <select id="cRepT">
-        <option value="admin">⚙️ Administrador define</option>
+        <option value="admin">⚙️ Master define</option>
         <option value="lider">🎸 Líder de banda define</option>
       </select>
     </div>
@@ -1194,9 +1320,10 @@ async function salvarCel(){
   const dt   = document.getElementById('cDt').value;
   const hr   = document.getElementById('cHr').value;
   const loc  = document.getElementById('cLoc').value.trim();
-  if(!nome||!dt||!hr||!loc){toast('Preencha os campos obrigatórios','err');return;}
-  const bandaId = document.getElementById('cBanda').value;
-  const repId   = document.getElementById('cRep').value;
+  if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
+  const bandaId    = document.getElementById('cBanda').value;
+  const repId      = document.getElementById('cRep').value;
+  const liderEqId  = document.getElementById('cLiderEq').value;
   load(true);
   const r=await api('criarCelebracao',{
     nome, data:dt, horario:hr, local:loc,
@@ -1204,6 +1331,7 @@ async function salvarCel(){
     bandasIds: bandaId ? [bandaId] : [],
     repertorioId: repId,
     repertorioTipo: document.getElementById('cRepT').value,
+    liderEquipeId: liderEqId,
   });
   load(false);
   if(!r.ok){toast(r.error||'Erro','err');return;}
@@ -1411,7 +1539,12 @@ async function modalGerarToken(){
       <div class="fg"><label>Eklesia</label><input type="text" id="tEklExt"/></div>
     </div>
     <div class="fg"><label>Nível *</label>
-      <select id="tNiv"><option value="voluntario">🎵 Voluntário</option><option value="lider">🎸 Líder</option><option value="admin">⚙️ Admin</option></select>
+      <select id="tNiv">
+        <option value="musico">🎵 Músico</option>
+        <option value="liderbanda">🎸 Líder de Banda</option>
+        <option value="liderequipe">👥 Líder de Equipe</option>
+        <option value="master">⚙️ Master</option>
+      </select>
     </div>
     <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarTok()">Gerar token</button></div>`);
 }
@@ -1420,7 +1553,7 @@ function autoNivel(sel){
   const opt=sel.options[sel.selectedIndex];
   const isExt=sel.value==='__ext__';
   document.getElementById('extFields').style.display=isExt?'':'none';
-  if(opt.dataset.lider==='sim') document.getElementById('tNiv').value='lider';
+  if(opt.dataset.lider==='sim') document.getElementById('tNiv').value='liderbanda';
 }
 
 async function salvarTok(){
@@ -1484,8 +1617,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('click',e=>{ if(_sideOpen&&!e.target.closest('#admSide')&&!e.target.closest('.burger')) toggleSide(); });
   const s=getSess();
   if(s){
-    if(s.nivel==='admin') initAdmin(s);
-    else if(s.nivel==='lider') initLider(s);
-    else if(s.nivel==='voluntario') initVol(s);
+    if(s.nivel==='master')          initAdmin(s);
+    else if(s.nivel==='liderequipe')initLiderEquipe(s);
+    else if(s.nivel==='liderbanda') initLider(s);
+    else if(s.nivel==='musico')     initVol(s);
   }
 });
