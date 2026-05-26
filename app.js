@@ -551,7 +551,7 @@ async function initAdmin(sess){
 
 function toggleSide(){ _sideOpen=!_sideOpen; document.getElementById('admSide').classList.toggle('open',_sideOpen); }
 
-const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',musicas:'Músicas',tokens:'Tokens'};
+const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',repertorios:'Repertórios',tokens:'Tokens'};
 
 function apg(name){
   document.querySelectorAll('.ap').forEach(p=>p.classList.remove('active'));
@@ -561,7 +561,7 @@ function apg(name){
   if(ni) ni.classList.add('active');
   document.getElementById('admTopTit').textContent=apgTitles[name]||name;
   if(_sideOpen) toggleSide();
-  const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,musicas:loadMusicas2,tokens:loadTokens};
+  const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,tokens:loadTokens};
   if(loaders[name]) loaders[name]();
 }
 
@@ -961,9 +961,9 @@ async function modalEditarBanda(id) {
       <div id="ebMembros" style="display:flex;flex-direction:column;gap:6px">
         ${memIds.map(mid => {
           const mm = mus.find(x => x.Id === mid);
-          return mm ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg3);border-radius:8px">
+          return mm ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg3);border-radius:8px" data-mid="${mid}">
             <span style="flex:1;font-size:13px">${mm.Nome||'?'} — ${mm.Instrumentos||''}</span>
-            <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px" data-mid="${mid}">✕</button>
+            <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>
           </div>` : '';
         }).join('')}
       </div>
@@ -1006,19 +1006,37 @@ async function salvarEdicaoBanda(id) {
   const sel = document.getElementById('ebLidId');
   const nome = document.getElementById('ebNome').value.trim();
   const lidId = sel.value;
-  const lidNome = sel.options[sel.selectedIndex]?.dataset?.nome||'';
+  const opt = sel.options[sel.selectedIndex];
+  const lidNome = opt ? (opt.dataset.nome || opt.text.split('—')[0].trim()) : '';
   if (!nome) { toast('Informe o nome','err'); return; }
+  if (!lidId) { toast('Selecione um líder','err'); return; }
 
-  // Coletar membros: existentes (não removidos) + novos selecionados
-  const existentes = [...document.querySelectorAll('#ebMembros button[data-mid]')].map(b=>b.dataset.mid);
-  const novos = [...document.querySelectorAll('#ebMembros .bi-musico')].map(s=>s.value).filter(Boolean);
-  const membrosIds = [...new Set([...existentes, ...novos, lidId].filter(Boolean))];
+  // Coletar membros:
+  // 1) Membros existentes não removidos (cada linha tem span com data-mid ou hidden input)
+  const existentes = [...document.querySelectorAll('#ebMembros [data-mid]')]
+    .map(el => el.dataset.mid).filter(Boolean);
+
+  // 2) Novos membros adicionados via select
+  const novos = [...document.querySelectorAll('#ebMembros .bi-musico')]
+    .map(s => s.value).filter(Boolean);
+
+  // Juntar tudo sem duplicatas, incluindo o líder
+  const membrosIds = [...new Set([lidId, ...existentes, ...novos].filter(Boolean))];
+
+  console.log('Salvando banda:', nome, 'Membros:', membrosIds);
 
   load(true);
-  const r = await api('editarBanda', { id, nome, liderNome:lidNome, liderMusicoId:lidId, emoji:document.getElementById('ebEmoji').value||'🎸', membrosIds });
+  const r = await api('editarBanda', {
+    id,
+    nome,
+    liderNome: lidNome,
+    liderMusicoId: lidId,
+    emoji: document.getElementById('ebEmoji').value || '🎸',
+    membrosIds,
+  });
   load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Banda atualizada! ✅','ok');
+  if (!r.ok) { toast(r.error||'Erro ao salvar','err'); return; }
+  toast('Banda atualizada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
   closeM();
   await loadBandas();
 }
@@ -1203,22 +1221,138 @@ async function loadEsc(){
     </div>`;}).join('');
 }
 
-// MÚSICAS ADMIN
-async function loadMusicas2(){
-  load(true); const r=await api('getMusicas'); load(false);
-  renderAMusicas(r.ok?r.data:[]);
+// REPERTÓRIOS + MÚSICAS ADMIN
+async function loadRepertoriosAdmin(){
+  load(true);
+  const [rRep, rMus] = await Promise.all([api('getRepertorios',{}), api('getMusicas')]);
+  load(false);
+  _aMusicas = rMus.ok ? rMus.data : [];
+
+  // Render repertórios
+  const repEl = document.getElementById('admRepList');
+  const reps = rRep.ok ? rRep.data : [];
+  if (!reps.length) {
+    repEl.innerHTML = `<p style="font-size:13px;color:var(--text3);margin-bottom:12px">Nenhum repertório criado ainda.</p>`;
+  } else {
+    reps.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
+    repEl.innerHTML = reps.map(r => {
+      const musIds = (r.MusicasIds||'').split(',').filter(Boolean);
+      const musNomes = musIds.map(mid => {
+        const m = _aMusicas.find(x => x.Id === mid);
+        return m ? m.Nome : null;
+      }).filter(Boolean);
+      return `
+      <div class="card" style="margin-bottom:10px">
+        <div class="ch">
+          <div style="flex:1">
+            <div class="cn">📋 ${r.Nome||'—'}</div>
+            <div class="cs" style="margin-top:2px">${musIds.length} música(s)</div>
+          </div>
+          <button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>
+        </div>
+        ${musNomes.length ? `<div class="itags">${musNomes.map(n=>`<span class="itag">🎵 ${n}</span>`).join('')}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // Render músicas
+  renderAMusicas(_aMusicas);
 }
 
+async function modalCriarRepertorioAdmin() {
+  load(true);
+  const rM = await api('getMusicas');
+  load(false);
+  const mus = rM.ok ? rM.data.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||'')) : [];
+  openM('Novo Repertório', `
+    <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
+    <div class="fg"><label>Músicas</label>
+      <div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0">
+        ${mus.map(m=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
+            <input type="checkbox" value="${m.Id}" style="width:16px;height:16px"/>
+            <div>
+              <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
+              <div style="font-size:11px;color:var(--text2)">${m.Artista||''} • ${m.Tom||''} • ${m.Bpm||''}bpm</div>
+            </div>
+          </label>`).join('')}
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarRepAdmin()">Criar</button>
+    </div>`);
+}
+
+async function salvarRepAdmin() {
+  const nome = document.getElementById('rNome').value.trim();
+  if (!nome) { toast('Informe o nome','err'); return; }
+  const ids = [...document.querySelectorAll('#mBody input[type=checkbox]:checked')].map(i=>i.value);
+  load(true);
+  const r = await api('criarRepertorio',{nome, bandaId:'', musicasIds:ids});
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Repertório criado! ✅','ok'); closeM(); await loadRepertoriosAdmin();
+}
+
+async function modalEditarRepertorio(id) {
+  load(true);
+  const [rRep, rMus] = await Promise.all([api('getRepertorios',{}), api('getMusicas')]);
+  load(false);
+  const rep = rRep.ok ? rRep.data.find(x=>x.Id===id) : null;
+  if (!rep) { toast('Não encontrado','err'); return; }
+  const mus = rMus.ok ? rMus.data.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||'')) : [];
+  const selIds = (rep.MusicasIds||'').split(',').filter(Boolean);
+
+  openM('Editar Repertório', `
+    <div class="fg"><label>Nome *</label><input type="text" id="erNome" value="${(rep.Nome||'').replace(/"/g,'&quot;')}"/></div>
+    <div class="fg"><label>Músicas</label>
+      <div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0">
+        ${mus.map(m=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
+            <input type="checkbox" value="${m.Id}" ${selIds.includes(m.Id)?'checked':''} style="width:16px;height:16px"/>
+            <div>
+              <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
+              <div style="font-size:11px;color:var(--text2)">${m.Artista||''} • ${m.Tom||''} • ${m.Bpm||''}bpm</div>
+            </div>
+          </label>`).join('')}
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarEditarRepAdmin('${id}')">💾 Salvar</button>
+    </div>`);
+}
+
+async function salvarEditarRepAdmin(id) {
+  const nome = document.getElementById('erNome').value.trim();
+  if (!nome) { toast('Informe o nome','err'); return; }
+  const ids = [...document.querySelectorAll('#mBody input[type=checkbox]:checked')].map(i=>i.value);
+  load(true);
+  const r = await api('editarRepertorio',{id, nome, musicasIds:ids});
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Repertório atualizado! ✅','ok'); closeM(); await loadRepertoriosAdmin();
+}
+
+// MÚSICAS ADMIN
+async function loadMusicas2(){ await loadRepertoriosAdmin(); }
+
 function renderAMusicas(list){
-  _aMusicas=list;
-  const el=document.getElementById('admMusList2');
-  if(!list.length){el.innerHTML=empty('🎼','Nenhuma música');return;}
+  _aMusicas = list;
+  const el = document.getElementById('admMusList2');
+  if (!el) return;
+  if (!list.length) { el.innerHTML=empty('🎼','Nenhuma música cadastrada'); return; }
   list.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  el.innerHTML=list.map(m=>`
+  el.innerHTML = list.map(m=>`
     <div class="card">
       <div class="cn">🎵 ${m.Nome||'—'}</div>
       <div class="cs" style="margin-top:4px">${m.Artista||''} • ${m.Versao||''}</div>
-      <div class="itags"><span class="itag">${m.Tom||'?'}</span><span class="itag">${m.Bpm||'?'} BPM</span></div>
+      <div class="itags">
+        <span class="itag">${m.Tom||'?'}</span>
+        <span class="itag">${m.Bpm||'?'} BPM</span>
+        ${m.Youtube?`<a href="${m.Youtube}" target="_blank" class="itag" style="color:var(--accent2);text-decoration:none">▶ YT</a>`:''}
+      </div>
     </div>`).join('');
 }
 
