@@ -141,6 +141,7 @@
     <div class="tabs">
       <button class="tab active" onclick="ltab('lBandas',this)">🎸 Bandas</button>
       <button class="tab" onclick="ltab('lEsc',this)">📅 Escalas</button>
+      <button class="tab" onclick="ltab('lMinhasEsc',this)">🗓 Minhas Escalas</button>
       <button class="tab" onclick="ltab('lRep',this)">📋 Repertórios</button>
       <button class="tab" onclick="ltab('lMus',this)">🎼 Músicas</button>
       <button class="tab" onclick="ltab('lSubs',this)">🔄 Subs</button>
@@ -149,6 +150,16 @@
     <div id="lEsc" class="tc">
       <div style="margin-bottom:12px"><button class="btn-primary sm" onclick="modalCriarEscala()">+ Nova escala</button></div>
       <div id="lEscList" class="lc"></div>
+    </div>
+    <div id="lMinhasEsc" class="tc">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Suas escalas pessoais como músico voluntário.</p>
+      <div class="ftabs">
+        <button class="ftab active" onclick="fvesc('todas',this)">Todas</button>
+        <button class="ftab" onclick="fvesc('pendente',this)">Pendentes</button>
+        <button class="ftab" onclick="fvesc('aceita',this)">Aceitas</button>
+        <button class="ftab" onclick="fvesc('recusada',this)">Recusadas</button>
+      </div>
+      <div id="lMinhasEscList" class="lc"></div>
     </div>
     <div id="lRep" class="tc">
       <div style="margin-bottom:12px"><button class="btn-primary sm" onclick="modalCriarRepertorio()">+ Novo repertório</button></div>
