@@ -4,9 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bandas IC</title>
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
-<meta http-equiv="Pragma" content="no-cache"/>
-<meta http-equiv="Expires" content="0"/>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -275,20 +272,6 @@
 <div id="toast" class="toast"></div>
 <div id="loading" class="loading"><div class="spin"></div></div>
 
-<script>
-  // Limpa cache e carrega JS sempre atualizado
-  (function() {
-    // Desregistrar Service Workers antigos
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(regs => {
-        regs.forEach(r => r.unregister());
-      });
-    }
-    // Carregar JS com timestamp para forçar versão nova
-    var s = document.createElement('script');
-    s.src = 'app.js?v=' + Date.now();
-    document.head.appendChild(s);
-  })();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
