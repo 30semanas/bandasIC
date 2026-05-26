@@ -181,29 +181,6 @@ function renderVEsc(){
   if(el) renderVEscInEl('vEscList');
 }
 
-function 
-  const now = new Date();
-  let list = _vEscFilter==='todas' ? [..._vEscalas] : _vEscalas.filter(e=>(e.meuStatus||'pendente')===_vEscFilter);
-  list.sort((a,b)=>{
-    const dA=new Date((a.Data||'9999')+'T12:00:00'), dB=new Date((b.Data||'9999')+'T12:00:00');
-    const stA=a.meuStatus||'pendente', stB=b.meuStatus||'pendente';
-    const pA=dA<now, pB=dB<now;
-    if(stA==='pendente'&&!pA&&(stB!=='pendente'||pB)) return -1;
-    if(stB==='pendente'&&!pB&&(stA!=='pendente'||pA)) return 1;
-    if(!pA&&pB) return -1; if(pA&&!pB) return 1;
-    return dA-dB;
-  });
-  const el=document.getElementById('vEscList');
-  if(!list.length){el.innerHTML=empty('📅','Nenhuma escala');return;}
-  el.innerHTML=list.map(e=>{
-    const d=pd(e.Data), past=e.Data&&new Date(e.Data+'T12:00:00')<now;
-    return `<div class="li" onclick="detEscVol('${e.Id}')">
-      <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-      <div class="li-info"><div class="li-name">${e.Titulo||'—'} ${past?'<span style="font-size:10px;color:var(--text3)">(passada)</span>':''}</div><div class="li-sub">⏰ ${e.Horario||''} • 📍 ${e.Local||''}</div></div>
-      <div class="li-r">${badge(e.meuStatus||'pendente')}</div>
-    </div>`;
-  }).join('');
-}
 
 async function detEscVol(id){
   load(true);
