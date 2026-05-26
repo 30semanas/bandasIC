@@ -241,11 +241,13 @@
       <div id="ap-repertorios" class="ap">
         <div class="pg-head"><h1>Repertórios</h1><button class="btn-primary sm" onclick="modalCriarRepertorioAdmin()">+ Novo repertório</button></div>
         <div id="admRepList" class="lc" style="margin-bottom:24px"></div>
-        <div class="pg-head" style="margin-top:8px">
-          <h2 style="font-family:var(--fh);font-size:18px;font-weight:700">🎼 Biblioteca de Músicas</h2>
-          <button class="btn-primary sm" onclick="modalAdicionarMusica()">+ Adicionar música</button>
+        <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border)">
+          <div class="pg-head" style="margin-bottom:14px">
+            <h2 style="font-family:var(--fh);font-size:18px;font-weight:700">🎼 Biblioteca de Músicas</h2>
+            <button class="btn-primary sm" onclick="modalAdicionarMusica()">+ Adicionar música</button>
+          </div>
+          <div id="admMusList2" class="cg"></div>
         </div>
-        <div id="admMusList2" class="cg"></div>
       </div>
       <div id="ap-tokens" class="ap">
         <div class="pg-head"><h1>Tokens de Acesso</h1><button class="btn-primary sm" onclick="modalGerarToken()">+ Gerar token</button></div>
