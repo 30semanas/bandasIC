@@ -1091,11 +1091,15 @@ async function modalEditarCel(id) {
   const reps   = rRep.ok   ? rRep.data   : [];
   const celBandas = (c.BandasIds||'').split(',').filter(Boolean);
 
+  // Formatar data e horário corretamente para inputs
+  const celData = (c.Data||'').includes('T') ? c.Data.split('T')[0] : (c.Data||'');
+  const celHora = (c.Horario||'').length > 5 ? c.Horario.substring(0,5) : (c.Horario||'');
+
   openM('Editar Celebração', `
     <div class="fg"><label>Nome *</label><input type="text" id="ecNome" value="${(c.Nome||'').replace(/"/g,'&quot;')}"/></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data *</label><input type="date" id="ecDt" value="${c.Data||''}"/></div>
-      <div class="fg"><label>Horário *</label><input type="time" id="ecHr" value="${c.Horario||''}"/></div>
+      <div class="fg"><label>Data *</label><input type="date" id="ecDt" value="${celData}"/></div>
+      <div class="fg"><label>Horário *</label><input type="time" id="ecHr" value="${celHora}"/></div>
     </div>
     <div class="fg"><label>Local *</label><input type="text" id="ecLoc" value="${(c.Local||'').replace(/"/g,'&quot;')}"/></div>
     <div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${c.Obs||''}</textarea></div>
@@ -1229,6 +1233,7 @@ async function loadRepertoriosAdmin(){
   _aMusicas = rMus.ok ? rMus.data : [];
 
   // Render repertórios
+  // Botão de adicionar música fica apenas na biblioteca, não no header da página
   const repEl = document.getElementById('admRepList');
   const reps = rRep.ok ? rRep.data : [];
   if (!reps.length) {
@@ -1264,23 +1269,28 @@ async function modalCriarRepertorioAdmin() {
   const rM = await api('getMusicas');
   load(false);
   const mus = rM.ok ? rM.data.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||'')) : [];
+
   openM('Novo Repertório', `
     <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
-    <div class="fg"><label>Músicas</label>
-      <div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0">
-        ${mus.map(m=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
-            <input type="checkbox" value="${m.Id}" style="width:16px;height:16px"/>
-            <div>
+
+    <div class="fg">
+      <label>Músicas</label>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Selecione as músicas para este repertório</p>
+      <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px">
+        ${mus.length ? mus.map(m=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
+            <input type="checkbox" value="${m.Id}" style="width:16px;height:16px;flex-shrink:0"/>
+            <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
-              <div style="font-size:11px;color:var(--text2)">${m.Artista||''} • ${m.Tom||''} • ${m.Bpm||''}bpm</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px">${m.Artista||''} ${m.Tom?'• Tom: <strong style=color:var(--accent2)>'+m.Tom+'</strong>':''} ${m.Bpm?'• '+m.Bpm+' BPM':''}</div>
             </div>
-          </label>`).join('')}
+          </label>`).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px">Nenhuma música cadastrada ainda. Adicione músicas na biblioteca abaixo.</p>'}
       </div>
     </div>
+
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarRepAdmin()">Criar</button>
+      <button class="btn-primary sm" onclick="salvarRepAdmin()">Criar repertório</button>
     </div>`);
 }
 
@@ -1306,18 +1316,22 @@ async function modalEditarRepertorio(id) {
 
   openM('Editar Repertório', `
     <div class="fg"><label>Nome *</label><input type="text" id="erNome" value="${(rep.Nome||'').replace(/"/g,'&quot;')}"/></div>
-    <div class="fg"><label>Músicas</label>
-      <div style="max-height:250px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0">
-        ${mus.map(m=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
-            <input type="checkbox" value="${m.Id}" ${selIds.includes(m.Id)?'checked':''} style="width:16px;height:16px"/>
-            <div>
+
+    <div class="fg">
+      <label>Músicas do repertório</label>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Selecione as músicas que fazem parte deste repertório</p>
+      <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0;border:1px solid var(--border);border-radius:10px;padding:10px">
+        ${mus.length ? mus.map(m=>`
+          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
+            <input type="checkbox" value="${m.Id}" ${selIds.includes(m.Id)?'checked':''} style="width:16px;height:16px;flex-shrink:0"/>
+            <div style="flex:1;min-width:0">
               <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
-              <div style="font-size:11px;color:var(--text2)">${m.Artista||''} • ${m.Tom||''} • ${m.Bpm||''}bpm</div>
+              <div style="font-size:11px;color:var(--text2);margin-top:2px">${m.Artista||''} ${m.Tom?'• Tom: <strong style=color:var(--accent2)>'+m.Tom+'</strong>':''} ${m.Bpm?'• '+m.Bpm+' BPM':''}</div>
             </div>
-          </label>`).join('')}
+          </label>`).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px">Nenhuma música cadastrada. Adicione músicas na biblioteca abaixo.</p>'}
       </div>
     </div>
+
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
       <button class="btn-primary sm" onclick="salvarEditarRepAdmin('${id}')">💾 Salvar</button>
