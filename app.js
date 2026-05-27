@@ -1032,11 +1032,19 @@ async function modalEditarBanda(id) {
   const b = _aBandas.find(x => x.Id === id);
   if (!b) return;
   load(true);
-  const [rL, rM] = await Promise.all([api('getLideres'), api('getMusicos')]);
+  const [rL, rM, rCel] = await Promise.all([api('getLideres'), api('getMusicos'), api('getCelebracoes')]);
   load(false);
-  const lids = rL.ok ? rL.data : [];
-  const mus  = rM.ok ? rM.data : [];
+  const lids  = rL.ok  ? rL.data  : [];
+  const mus   = rM.ok  ? rM.data  : [];
+  const cels  = rCel.ok ? rCel.data : [];
   const memIds = (b.MembrosIds||'').split(',').filter(Boolean);
+
+  // Celebrações que já têm essa banda
+  const celsDaBanda = cels.filter(cel => {
+    const ids = (cel.BandasIds||'').split(',').map(x=>x.trim());
+    return ids.includes(id);
+  });
+  const celsDaBandaIds = celsDaBanda.map(c => c.Id);
 
   openM('Editar Banda', `
     <div class="fg"><label>Nome *</label><input type="text" id="ebNome" value="${(b.Nome||'').replace(/"/g,'&quot;')}"/></div>
@@ -1046,7 +1054,8 @@ async function modalEditarBanda(id) {
       </select>
     </div>
     <div class="fg"><label>Emoji</label><input type="text" id="ebEmoji" value="${b.Emoji||'🎸'}" maxlength="2"/></div>
-    <div class="dsec" style="margin-top:8px">
+
+    <div class="dsec" style="margin-top:4px">
       <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES ATUAIS</h3>
       <div id="ebMembros" style="display:flex;flex-direction:column;gap:6px">
         ${memIds.map(mid => {
@@ -1059,41 +1068,31 @@ async function modalEditarBanda(id) {
       </div>
       <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegranteEd()">+ Adicionar integrante</button>
     </div>
+
+    <div class="dsec" style="margin-top:8px">
+      <h3 style="font-size:12px;color:var(--text2);margin-bottom:8px">CELEBRAÇÕES QUE ESTA BANDA VAI TOCAR</h3>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:10px">Selecione uma ou mais celebrações</p>
+      <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px">
+        ${cels.length ? cels.map(cel => {
+          const d = pd(cel.Data||'');
+          return `<label style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg3);border-radius:8px;cursor:pointer">
+            <input type="checkbox" class="cel-check" value="${cel.Id}" ${celsDaBandaIds.includes(cel.Id)?'checked':''} style="width:16px;height:16px;flex-shrink:0"/>
+            <div>
+              <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
+              <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
+            </div>
+          </label>`;
+        }).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:12px">Nenhuma celebração cadastrada</p>'}
+      </div>
+    </div>
+
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
       <button class="btn-primary sm" onclick="salvarEdicaoBanda('${id}')">💾 Salvar</button>
     </div>`);
   window._bandaMusicos = mus;
-}
-
-function addLinhaIntegrante() {
-  const mus = window._bandaMusicos || [];
-  const instrList = [...new Set(mus.flatMap(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
-  const container = document.getElementById('bMembros');
-  if (!container) { toast('Erro: container não encontrado','err'); return; }
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center';
-  div.innerHTML = `
-    <select class="bi-instr" onchange="filtrarMusBanda(this)" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
-      <option value="">Instrumento...</option>
-      ${instrList.map(i=>`<option value="${i}">${i}</option>`).join('')}
-    </select>
-    <select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
-      <option value="">— Selecione instrumento —</option>
-    </select>
-    <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>`;
-  container.appendChild(div);
-}
-
-function filtrarMusBanda(sel) {
-  const instr = sel.value;
-  const mus = (window._bandaMusicos || []).filter(m =>
-    (m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr)
-  );
-  const row = sel.parentElement;
-  const musSel = row.querySelector('.bi-musico');
-  musSel.innerHTML = `<option value="">— Selecione músico —</option>` +
-    mus.map(m => `<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
+  window._todasCels = cels;
+  window._bandaId = id;
 }
 
 function addLinhaIntegranteEd() {
@@ -1131,31 +1130,57 @@ async function salvarEdicaoBanda(id) {
   if (!nome) { toast('Informe o nome','err'); return; }
   if (!lidId) { toast('Selecione um líder','err'); return; }
 
-  // Coletar membros:
-  // 1) Membros existentes não removidos (cada linha tem span com data-mid ou hidden input)
+  // Membros existentes (não removidos)
   const existentes = [...document.querySelectorAll('#ebMembros [data-mid]')]
     .map(el => el.dataset.mid).filter(Boolean);
 
-  // 2) Novos membros adicionados via select
-  const novos = [...document.querySelectorAll('#ebMembros .bi-musico')]
+  // Novos membros adicionados via select
+  const novos = [...document.querySelectorAll('#ebMembros select.bi-musico')]
     .map(s => s.value).filter(Boolean);
 
-  // Juntar tudo sem duplicatas, incluindo o líder
   const membrosIds = [...new Set([lidId, ...existentes, ...novos].filter(Boolean))];
 
-  console.log('Salvando banda:', nome, 'Membros:', membrosIds);
+  // Celebrações selecionadas
+  const celsSelecionadas = [...document.querySelectorAll('.cel-check:checked')].map(cb => cb.value);
+  const celsNaoSelecionadas = [...document.querySelectorAll('.cel-check:not(:checked)')].map(cb => cb.value);
 
   load(true);
+
+  // Salvar banda
   const r = await api('editarBanda', {
-    id,
-    nome,
+    id, nome,
     liderNome: lidNome,
     liderMusicoId: lidId,
     emoji: document.getElementById('ebEmoji').value || '🎸',
     membrosIds,
   });
+
+  if (!r.ok) { load(false); toast(r.error||'Erro','err'); return; }
+
+  // Atualizar BandasIds em cada celebração selecionada (adicionar esta banda)
+  const todasCels = window._todasCels || [];
+  for (const celId of celsSelecionadas) {
+    const cel = todasCels.find(c => c.Id === celId);
+    if (!cel) continue;
+    const ids = (cel.BandasIds||'').split(',').filter(Boolean);
+    if (!ids.includes(id)) {
+      ids.push(id);
+      await api('editarCelebracao', { id: celId, ...cel, bandasIds: ids });
+    }
+  }
+
+  // Remover esta banda das celebrações desmarcadas
+  for (const celId of celsNaoSelecionadas) {
+    const cel = todasCels.find(c => c.Id === celId);
+    if (!cel) continue;
+    const ids = (cel.BandasIds||'').split(',').filter(Boolean).filter(bid => bid !== id);
+    const tinha = (cel.BandasIds||'').split(',').filter(Boolean).includes(id);
+    if (tinha) {
+      await api('editarCelebracao', { id: celId, ...cel, bandasIds: ids });
+    }
+  }
+
   load(false);
-  if (!r.ok) { toast(r.error||'Erro ao salvar','err'); return; }
   toast('Banda atualizada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
   closeM();
   await loadBandas();
@@ -1193,24 +1218,32 @@ async function modalCriarBanda(){
 async function salvarBanda(){
   const sel = document.getElementById('bLidId');
   const nome = document.getElementById('bNome').value.trim();
-  const lidId = sel.value;
-  const opt = sel.options[sel.selectedIndex];
+  const lidId = sel ? sel.value : '';
+  const opt = sel ? sel.options[sel.selectedIndex] : null;
   const lidNome = opt ? (opt.dataset.nome || opt.text.split('—')[0].trim()) : '';
   if (!nome) { toast('Informe o nome da banda','err'); return; }
   if (!lidId) { toast('Selecione um líder','err'); return; }
 
-  const novos = [...document.querySelectorAll('#bMembros .bi-musico')].map(s=>s.value).filter(Boolean);
+  // Coletar todos os músicos selecionados (selects com classe bi-musico dentro de #bMembros)
+  const container = document.getElementById('bMembros');
+  const musicoSelects = container ? container.querySelectorAll('select.bi-musico') : [];
+  const novos = [...musicoSelects].map(s => s.value).filter(Boolean);
   const membrosIds = [...new Set([lidId, ...novos].filter(Boolean))];
 
   load(true);
-  const r = await api('criarBanda',{nome, liderNome:lidNome, liderMusicoId:lidId, emoji:document.getElementById('bEmoji').value||'🎸', membrosIds});
+  const r = await api('criarBanda', {
+    nome,
+    liderNome: lidNome,
+    liderMusicoId: lidId,
+    emoji: document.getElementById('bEmoji').value || '🎸',
+    membrosIds,
+  });
   load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Banda criada com '+membrosIds.length+' integrante(s)! ✅','ok');
+  if (!r.ok) { toast(r.error||'Erro ao criar banda','err'); return; }
+  toast('Banda criada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
   closeM();
   await loadBandas();
 }
-
 
 function confRemBanda(id,nome){
   _pendAct={type:'remBanda',id};
