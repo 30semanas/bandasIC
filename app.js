@@ -1066,6 +1066,36 @@ async function modalEditarBanda(id) {
   window._bandaMusicos = mus;
 }
 
+function addLinhaIntegrante() {
+  const mus = window._bandaMusicos || [];
+  const instrList = [...new Set(mus.flatMap(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
+  const container = document.getElementById('bMembros');
+  if (!container) { toast('Erro: container não encontrado','err'); return; }
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <select class="bi-instr" onchange="filtrarMusBanda(this)" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
+      <option value="">Instrumento...</option>
+      ${instrList.map(i=>`<option value="${i}">${i}</option>`).join('')}
+    </select>
+    <select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
+      <option value="">— Selecione instrumento —</option>
+    </select>
+    <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>`;
+  container.appendChild(div);
+}
+
+function filtrarMusBanda(sel) {
+  const instr = sel.value;
+  const mus = (window._bandaMusicos || []).filter(m =>
+    (m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr)
+  );
+  const row = sel.parentElement;
+  const musSel = row.querySelector('.bi-musico');
+  musSel.innerHTML = `<option value="">— Selecione músico —</option>` +
+    mus.map(m => `<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
+}
+
 function addLinhaIntegranteEd() {
   const mus = window._bandaMusicos || [];
   const instrList = [...new Set(mus.flatMap(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
