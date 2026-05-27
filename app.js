@@ -815,16 +815,22 @@ async function loadMusicos(){
   _aMusicos.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
   const el=document.getElementById('admMusList');
   if(!_aMusicos.length){el.innerHTML=empty('👥','Nenhum músico');return;}
-  el.innerHTML=_aMusicos.map(m=>`
+  const nivelLabel2 = {master:'⚙️ Master',liderequipe:'👥 Líder Equipe',liderbanda:'🎸 Líder Banda',musico:'🎵 Músico'};
+  el.innerHTML=_aMusicos.map(m=>{
+    const niv = m.NivelAcesso || (m.IsLider==='sim' ? 'liderbanda' : 'musico');
+    const nivLabel = nivelLabel2[niv] || niv;
+    const nivColor = niv==='master'?'#EF4444':niv==='liderequipe'?'#FBBF24':niv==='liderbanda'?'var(--accent2)':'var(--green)';
+    return `
     <div class="card click" onclick="detMusico('${m.Id}')">
       <div class="ch">
         <div class="av">${(m.Nome||'?')[0]}</div>
-        <div style="flex:1"><div class="cn">${m.Nome||'—'} ${m.IsLider==='sim'?'<span class="rtag">Líder</span>':''}</div><div class="cs">${m.Eklesia||'—'} • 📱 ${m.WhatsApp||'—'}</div></div>
+        <div style="flex:1"><div class="cn">${m.Nome||'—'} <span class="rtag" style="background:rgba(0,0,0,.3);color:${nivColor}">${nivLabel}</span></div><div class="cs">${m.Eklesia||'—'} • 📱 ${m.WhatsApp||'—'}</div></div>
         <span class="badge b-aprov">ativo</span>
       </div>
       <div class="itags">${(m.Instrumentos||'').split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
       <div class="cf"><span style="font-size:12px;color:var(--text3)">${m.Banda||'Sem banda'}</span><a class="btn-wa" href="${wa(String(m.WhatsApp||''),'')}" target="_blank" onclick="event.stopPropagation()">💬</a></div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function detMusico(id){
@@ -843,7 +849,10 @@ async function detMusico(id){
   const toks    = rT.ok ? rT.data : [];
   const tokEx   = toks.find(t => String(t.MusicoId) === String(id));
   const tokStr  = tokEx ? (tokEx.Token || '') : '';
-  const tokNiv  = tokEx ? (tokEx.Nivel  || '') : '';
+  // Nível: usa NivelAcesso (já normalizado) ou pega do token
+  const nivelMapLocal = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const tokNivRaw = tokEx ? (tokEx.Nivel || '') : '';
+  const tokNiv  = m.NivelAcesso || nivelMapLocal[tokNivRaw.toLowerCase()] || tokNivRaw || (lider ? 'liderbanda' : 'musico');
 
   // Banda: buscar do cadastro de bandas onde o músico é membro
   const bandas  = rBandas.ok ? rBandas.data : [];
