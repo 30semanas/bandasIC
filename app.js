@@ -300,7 +300,12 @@ async function detEscVol(id){
             <div style="width:24px;height:24px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
             <div class="li-info">
               <div class="li-name">${m.Titulo||'—'}</div>
-              <div class="li-sub">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
+              <div class="li-sub">
+                ${m.Composicao||''}
+                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].tom)?`• <strong style="color:var(--accent2)">Tom: ${e.overrides[m.Id].tom}</strong>`:''}
+                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].bpm)?`• ${e.overrides[m.Id].bpm} BPM`:''}
+                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].versao)?`• ${e.overrides[m.Id].versao}`:m.Versao?`• ${m.Versao}`:''}
+              </div>
             </div>
             ${m.Link ? `<a href="${m.Link}" target="_blank" class="btn-primary sm" style="text-decoration:none;padding:5px 10px">▶</a>` : ''}
           </div>`).join('')}
@@ -421,6 +426,116 @@ async function initLider(sess){
   renderLSubs(rSubs.ok ? rSubs.data : []);
 }
 
+// ===== LÍDER — CONFIGURAR REPERTÓRIO =====
+async function modalEditarRepLider(repId) {
+  load(true);
+  const [rRep, rBib] = await Promise.all([api('getRepertorios',{}), api('getBiblioteca')]);
+  load(false);
+
+  const rep = rRep.ok ? rRep.data.find(r => r.Id === repId) : null;
+  if (!rep) { toast('Repertório não encontrado','err'); return; }
+
+  const bib = rBib.ok ? rBib.data : [];
+  const musIds = (rep.MusicasIds||'').split(',').filter(Boolean);
+  // Get overrides already saved
+  const overrides = rep.Overrides ? JSON.parse(rep.Overrides) : {};
+
+  if (!musIds.length) {
+    toast('Este repertório não tem músicas cadastradas','err');
+    return;
+  }
+
+  const musicas = musIds.map(mid => {
+    const m = bib.find(x => x.Id === mid) || {};
+    const ov = overrides[mid] || {};
+    return { ...m, Id: mid, _tom: ov.tom||'', _bpm: ov.bpm||'', _versao: ov.versao||(m.Versao||'') };
+  });
+
+  openM('Configurar Repertório — ' + (rep.Nome||''), `
+    <p style="font-size:12px;color:var(--text2);margin-bottom:14px">
+      Configure tom, BPM e versão para cada música. Essas configurações são específicas para este repertório e não alteram a biblioteca.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      ${musicas.map((m,i) => `
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
+          <div style="font-weight:600;font-size:14px;margin-bottom:10px">${i+1}. ${m.Titulo||'—'}</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:10px">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div class="fg">
+              <label style="font-size:10px">Tom</label>
+              <input type="text" class="rep-tom" data-mid="${m.Id}" value="${m._tom}" placeholder="Ex: G, A, C#" style="padding:7px 10px;font-size:13px"/>
+            </div>
+            <div class="fg">
+              <label style="font-size:10px">BPM</label>
+              <input type="number" class="rep-bpm" data-mid="${m.Id}" value="${m._bpm}" placeholder="Ex: 75" style="padding:7px 10px;font-size:13px"/>
+            </div>
+            <div class="fg">
+              <label style="font-size:10px">Versão</label>
+              <input type="text" class="rep-versao" data-mid="${m.Id}" value="${m._versao}" placeholder="Ex: Fernandinho" style="padding:7px 10px;font-size:13px"/>
+            </div>
+          </div>
+          ${m.Link?`<a href="${m.Link}" target="_blank" style="font-size:11px;color:var(--accent2);text-decoration:none;display:inline-block;margin-top:8px">▶ Ouvir referência</a>`:''}
+        </div>`).join('')}
+    </div>
+    <div style="margin-top:14px;padding:12px;background:rgba(52,211,153,.08);border:1px solid var(--green);border-radius:10px">
+      <p style="font-size:12px;color:var(--green)">✅ Ao salvar como <strong>Pronto</strong>, a escala será liberada para os músicos aceitarem.</p>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-ghost sm" onclick="salvarRepLider('${repId}',false)">💾 Salvar rascunho</button>
+      <button class="btn-primary sm" onclick="salvarRepLider('${repId}',true)">✅ Salvar e liberar</button>
+    </div>`);
+}
+
+async function salvarRepLider(repId, liberar) {
+  // Coletar overrides: tom, bpm, versao por musicaId
+  const overrides = {};
+  document.querySelectorAll('.rep-tom').forEach(el => {
+    const mid = el.dataset.mid;
+    if (!overrides[mid]) overrides[mid] = {};
+    overrides[mid].tom = el.value.trim();
+  });
+  document.querySelectorAll('.rep-bpm').forEach(el => {
+    const mid = el.dataset.mid;
+    if (!overrides[mid]) overrides[mid] = {};
+    overrides[mid].bpm = el.value.trim();
+  });
+  document.querySelectorAll('.rep-versao').forEach(el => {
+    const mid = el.dataset.mid;
+    if (!overrides[mid]) overrides[mid] = {};
+    overrides[mid].versao = el.value.trim();
+  });
+
+  // Validar: tom obrigatório para liberar
+  if (liberar) {
+    const semTom = Object.values(overrides).filter(o => !o.tom);
+    if (semTom.length) {
+      toast('Preencha o tom de todas as músicas antes de liberar','err');
+      return;
+    }
+  }
+
+  load(true);
+  const r = await api('salvarOverridesRepertorio', {
+    repId,
+    overrides: JSON.stringify(overrides),
+    pronto: liberar ? 'sim' : 'nao',
+  });
+  load(false);
+
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+
+  if (liberar) {
+    toast('Repertório liberado! Músicos já podem ver a escala ✅','ok');
+  } else {
+    toast('Rascunho salvo!','ok');
+  }
+  closeM();
+  const rRep = await api('getRepertorios',{});
+  renderLRep(rRep.ok ? rRep.data : []);
+}
+
+
 function ltab(id,el){
   document.querySelectorAll('#sLid .tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active'));
@@ -525,7 +640,17 @@ function detMus(id){
 function renderLRep(list){
   const el=document.getElementById('lRepList');
   if(!list.length){el.innerHTML=empty('📋','Nenhum repertório');return;}
-  el.innerHTML=list.map(r=>`<div class="li"><div class="li-info"><div class="li-name">📋 ${r.Nome||'—'}</div><div class="li-sub">${(r.MusicasIds||'').split(',').filter(Boolean).length} música(s)</div></div></div>`).join('');
+  el.innerHTML=list.map(r=>{
+    const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
+    const pronto = r.RepReady === 'sim';
+    return `<div class="li">
+      <div class="li-info">
+        <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
+        <div class="li-sub">${musCount} música(s)</div>
+      </div>
+      <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">✏️ Configurar</button>
+    </div>`;
+  }).join('');
 }
 
 function renderLSubs(list){
