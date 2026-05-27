@@ -1476,41 +1476,51 @@ async function loadRepertoriosAdmin(){
   load(true);
   const [rRep, rMus, rBib] = await Promise.all([api('getRepertorios',{}), api('getMusicas'), api('getBiblioteca')]);
   load(false);
-  _aMusicas = rMus.ok ? rMus.data : [];
-  _biblioteca = rBib.ok ? rBib.data : [];
+  _aMusicas  = rMus.ok  ? rMus.data  : [];
+  _biblioteca = rBib.ok ? rBib.data  : [];
 
-  // Render repertórios
-  // Botão de adicionar música fica apenas na biblioteca, não no header da página
   const repEl = document.getElementById('admRepList');
-  const reps = rRep.ok ? rRep.data : [];
+  const reps  = rRep.ok ? rRep.data  : [];
+
   if (!reps.length) {
     repEl.innerHTML = `<p style="font-size:13px;color:var(--text3);margin-bottom:12px">Nenhum repertório criado ainda.</p>`;
-  } else {
-    reps.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-    repEl.innerHTML = reps.map(r => {
-      const musIds = (r.MusicasIds||'').split(',').filter(Boolean);
-      const musNomes = musIds.map(mid => {
-        const bm = _biblioteca.find(x => x.Id === mid);
-        if (bm) return bm.Titulo;
-        const m = _aMusicas.find(x => x.Id === mid);
-        return m ? m.Nome : null;
-      }).filter(Boolean);
-      return `
-      <div class="card" style="margin-bottom:10px">
-        <div class="ch">
-          <div style="flex:1">
-            <div class="cn">📋 ${r.Nome||'—'}</div>
-            <div class="cs" style="margin-top:2px">${musIds.length} música(s)</div>
-          </div>
-          <button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>
-        </div>
-        ${musNomes.length ? `<div class="itags">${musNomes.map(n=>`<span class="itag">🎵 ${n}</span>`).join('')}</div>` : ''}
-      </div>`;
-    }).join('');
+    return;
   }
 
-  // Render músicas
-  renderAMusicas(_aMusicas);
+  reps.sort((a,b) => (a.Nome||'').localeCompare(b.Nome||''));
+  repEl.innerHTML = reps.map(r => {
+    const musIds  = (r.MusicasIds||'').split(',').filter(Boolean);
+    const musNomes = musIds.map(mid => {
+      const bm = _biblioteca.find(x => x.Id === mid);
+      if (bm) return bm.Titulo;
+      const m2 = _aMusicas.find(x => x.Id === mid);
+      return m2 ? m2.Nome : null;
+    }).filter(Boolean);
+
+    return `
+    <div class="card" style="margin-bottom:10px">
+      <div class="ch">
+        <div style="flex:1">
+          <div class="cn">📋 ${r.Nome||'—'}</div>
+          <div class="cs" style="margin-top:2px">${musIds.length} música(s)</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>
+          <button class="btn-red" style="padding:5px 12px;font-size:13px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>
+        </div>
+      </div>
+      ${musNomes.length ? `<div class="itags">${musNomes.map(n=>`<span class="itag">🎵 ${n}</span>`).join('')}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function confExcluirRepertorio(id, nome) {
+  if (!confirm('Excluir o repertório "' + nome + '"?\nEsta ação não pode ser desfeita.')) return;
+  api('removerRepertorio', { id }).then(r => {
+    if (!r.ok) { toast(r.error||'Erro','err'); return; }
+    toast('Repertório excluído!','ok');
+    loadRepertoriosAdmin();
+  });
 }
 
 async function modalCriarRepertorioAdmin() {
@@ -1640,35 +1650,43 @@ async function salvarRepAdmin() {
 
 async function modalEditarRepertorio(id) {
   load(true);
-  const [rRep, rMus] = await Promise.all([api('getRepertorios',{}), api('getMusicas')]);
+  const [rRep, rB] = await Promise.all([api('getRepertorios',{}), api('getBiblioteca')]);
   load(false);
-  const rep = rRep.ok ? rRep.data.find(x=>x.Id===id) : null;
+
+  const rep = rRep.ok ? rRep.data.find(x => x.Id === id) : null;
   if (!rep) { toast('Não encontrado','err'); return; }
-  const mus = rMus.ok ? rMus.data.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||'')) : [];
+
+  const bib    = rB.ok ? rB.data.sort((a,b)=>(a.Titulo||'').localeCompare(b.Titulo||'')) : [];
   const selIds = (rep.MusicasIds||'').split(',').filter(Boolean);
+
+  // Pre-populate globals
+  window._repBiblioteca   = bib;
+  window._repSelecionadas = bib.filter(m => selIds.includes(m.Id));
 
   openM('Editar Repertório', `
     <div class="fg"><label>Nome *</label><input type="text" id="erNome" value="${(rep.Nome||'').replace(/"/g,'&quot;')}"/></div>
-
     <div class="fg">
-      <label>Músicas do repertório</label>
-      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Selecione as músicas que fazem parte deste repertório</p>
-      <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0;border:1px solid var(--border);border-radius:10px;padding:10px">
-        ${mus.length ? mus.map(m=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
-            <input type="checkbox" value="${m.Id}" ${selIds.includes(m.Id)?'checked':''} style="width:16px;height:16px;flex-shrink:0"/>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px">${m.Artista||''} ${m.Tom?'• Tom: <strong style=color:var(--accent2)>'+m.Tom+'</strong>':''} ${m.Bpm?'• '+m.Bpm+' BPM':''}</div>
-            </div>
-          </label>`).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px">Nenhuma música cadastrada. Adicione músicas na biblioteca abaixo.</p>'}
+      <label>Buscar músicas da biblioteca</label>
+      ${bib.length
+        ? `<input type="text" id="repBusca" placeholder="Digite título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
+           <div id="repSugestoes" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
+           <p style="font-size:11px;color:var(--text3);margin-top:4px">${bib.length} música(s) disponíveis</p>`
+        : `<p style="font-size:13px;color:var(--yellow)">⚠️ Biblioteca vazia. Adicione músicas em Biblioteca.</p>`
+      }
+    </div>
+    <div class="fg">
+      <label>Músicas no repertório (${window._repSelecionadas.length})</label>
+      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:48px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
+        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center;margin:auto;${window._repSelecionadas.length?'display:none':''}">Nenhuma música adicionada</p>
       </div>
     </div>
-
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
       <button class="btn-primary sm" onclick="salvarEditarRepAdmin('${id}')">💾 Salvar</button>
     </div>`);
+
+  // Render pre-selected after modal is open
+  setTimeout(() => renderRepSelecionadas(), 80);
 }
 
 async function salvarEditarRepAdmin(id) {
