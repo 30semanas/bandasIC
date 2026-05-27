@@ -1520,19 +1520,27 @@ async function modalCriarRepertorioAdmin() {
   window._repBiblioteca = rB.ok ? rB.data.sort((a,b)=>(a.Titulo||'').localeCompare(b.Titulo||'')) : [];
   window._repSelecionadas = [];
 
+  const bibVazia = window._repBiblioteca.length === 0;
   openM('Novo Repertório', `
     <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
 
     <div class="fg">
       <label>Buscar músicas da biblioteca</label>
-      <input type="text" id="repBusca" placeholder="Digite o título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
-      <div id="repSugestoes" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto"></div>
+      ${bibVazia
+        ? `<div style="padding:14px;background:rgba(251,191,36,.08);border:1px solid var(--yellow);border-radius:10px;text-align:center">
+             <p style="font-size:13px;color:var(--yellow);">⚠️ Biblioteca vazia</p>
+             <p style="font-size:12px;color:var(--text3);margin-top:4px">Vá em <strong>Biblioteca</strong> no menu lateral e adicione músicas primeiro.</p>
+           </div>`
+        : `<input type="text" id="repBusca" placeholder="Digite título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
+           <div id="repSugestoes" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
+           <p style="font-size:11px;color:var(--text3);margin-top:4px">${window._repBiblioteca.length} música(s) disponíveis</p>`
+      }
     </div>
 
     <div class="fg">
       <label>Músicas selecionadas</label>
-      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:40px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
-        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center">Nenhuma música adicionada</p>
+      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:48px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
+        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center;margin:auto">Nenhuma música adicionada</p>
       </div>
     </div>
 
@@ -1545,7 +1553,9 @@ async function modalCriarRepertorioAdmin() {
 function buscarRepMusica(query) {
   const bib = window._repBiblioteca || [];
   const div = document.getElementById('repSugestoes');
-  if (!query.trim()) { div.style.display='none'; return; }
+  console.log('buscarRepMusica: bib size=', bib.length, 'query=', query);
+  if (!query.trim()) { if(div) div.style.display='none'; return; }
+  if (!div) { console.warn('repSugestoes not found'); return; }
   const q = query.toLowerCase();
   const results = bib.filter(m =>
     (m.Titulo||'').toLowerCase().includes(q) ||
