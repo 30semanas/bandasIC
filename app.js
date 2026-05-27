@@ -1070,19 +1070,30 @@ async function modalEditarBanda(id) {
     </div>
 
     <div class="dsec" style="margin-top:8px">
-      <h3 style="font-size:12px;color:var(--text2);margin-bottom:8px">CELEBRAÇÕES QUE ESTA BANDA VAI TOCAR</h3>
-      <p style="font-size:11px;color:var(--text3);margin-bottom:10px">Selecione uma ou mais celebrações</p>
-      <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px">
-        ${cels.length ? cels.map(cel => {
+      <h3 style="font-size:12px;color:var(--text2);margin-bottom:8px">CELEBRAÇÕES DESTA BANDA</h3>
+
+      <!-- Celebrações já vinculadas -->
+      <div id="bandaCelsSelecionadas" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        ${celsDaBanda.length ? celsDaBanda.map(cel => {
           const d = pd(cel.Data||'');
-          return `<label style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg3);border-radius:8px;cursor:pointer">
-            <input type="checkbox" class="cel-check" value="${cel.Id}" ${celsDaBandaIds.includes(cel.Id)?'checked':''} style="width:16px;height:16px;flex-shrink:0"/>
-            <div>
+          return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px" data-cel-id="${cel.Id}">
+            <div style="flex:1">
               <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
               <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
             </div>
-          </label>`;
-        }).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:12px">Nenhuma celebração cadastrada</p>'}
+            <button onclick="removerCelDaBanda('${cel.Id}')" style="background:rgba(248,113,113,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>
+          </div>`;
+        }).join('') : '<p id="bandaCelsVazio" style="font-size:12px;color:var(--text3);text-align:center;padding:8px">Nenhuma celebração vinculada</p>'}
+      </div>
+
+      <!-- Busca para adicionar mais -->
+      <div style="position:relative">
+        <input type="text" id="bandaCelBusca"
+          placeholder="🔍 Buscar celebração para adicionar..."
+          oninput="buscarCelParaBanda(this.value)"
+          autocomplete="off"
+          style="width:100%;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:var(--font);font-size:13px;outline:none"/>
+        <div id="bandaCelSugestoes" style="display:none;position:absolute;z-index:100;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
       </div>
     </div>
 
@@ -1168,6 +1179,83 @@ function filtrarMusBandaEd(sel) {
   musSel.innerHTML = `<option value="">— Selecione —</option>` + mus.map(m=>`<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
 }
 
+// ===== BANDA-CELEBRAÇÕES AUTOCOMPLETE =====
+function buscarCelParaBanda(query) {
+  const div = document.getElementById('bandaCelSugestoes');
+  if (!div) return;
+  if (!query.trim()) { div.style.display = 'none'; return; }
+
+  const q = query.toLowerCase();
+  const jaVinculados = [...document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]')]
+    .map(el => el.dataset.celId);
+
+  const cels = (window._todasCels || []).filter(c =>
+    !jaVinculados.includes(c.Id) &&
+    ((c.Nome||'').toLowerCase().includes(q) ||
+     (c.Local||'').toLowerCase().includes(q))
+  ).slice(0, 6);
+
+  if (!cels.length) { div.style.display = 'none'; return; }
+
+  div.style.display = 'block';
+  div.innerHTML = cels.map(cel => {
+    const d = pd(cel.Data||'');
+    return `<div onclick="adicionarCelBanda('${cel.Id}')"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"
+      onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
+      <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
+    </div>`;
+  }).join('');
+}
+
+function adicionarCelBanda(celId) {
+  const div = document.getElementById('bandaCelSugestoes');
+  if (div) div.style.display = 'none';
+  const input = document.getElementById('bandaCelBusca');
+  if (input) input.value = '';
+
+  // Verificar se já está vinculada
+  if (document.querySelector(`#bandaCelsSelecionadas [data-cel-id="${celId}"]`)) return;
+
+  const cel = (window._todasCels || []).find(c => c.Id === celId);
+  if (!cel) return;
+
+  const vazio = document.getElementById('bandaCelsVazio');
+  if (vazio) vazio.style.display = 'none';
+
+  const d = pd(cel.Data||'');
+  const container = document.getElementById('bandaCelsSelecionadas');
+  const item = document.createElement('div');
+  item.dataset.celId = celId;
+  item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px';
+  item.innerHTML = `
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
+      <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
+    </div>
+    <button onclick="removerCelDaBanda('${celId}')"
+      style="background:rgba(248,113,113,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>`;
+  container.appendChild(item);
+}
+
+function removerCelDaBanda(celId) {
+  const el = document.querySelector(`#bandaCelsSelecionadas [data-cel-id="${celId}"]`);
+  if (el) el.remove();
+  // Mostrar vazio se não sobrou nenhuma
+  const restantes = document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]');
+  if (!restantes.length) {
+    const container = document.getElementById('bandaCelsSelecionadas');
+    if (container && !document.getElementById('bandaCelsVazio')) {
+      const p = document.createElement('p');
+      p.id = 'bandaCelsVazio';
+      p.style.cssText = 'font-size:12px;color:var(--text3);text-align:center;padding:8px';
+      p.textContent = 'Nenhuma celebração vinculada';
+      container.appendChild(p);
+    }
+  }
+}
+
 async function salvarEdicaoBanda(id) {
   const sel = document.getElementById('ebLidId');
   const nome = document.getElementById('ebNome').value.trim();
@@ -1180,50 +1268,53 @@ async function salvarEdicaoBanda(id) {
   // Membros existentes (não removidos)
   const existentes = [...document.querySelectorAll('#ebMembros [data-mid]')]
     .map(el => el.dataset.mid).filter(Boolean);
-
-  // Novos membros adicionados via select
   const novos = [...document.querySelectorAll('#ebMembros select.bi-musico')]
     .map(s => s.value).filter(Boolean);
-
   const membrosIds = [...new Set([lidId, ...existentes, ...novos].filter(Boolean))];
 
-  // Celebrações selecionadas
-  const celsSelecionadas = [...document.querySelectorAll('.cel-check:checked')].map(cb => cb.value);
-  const celsNaoSelecionadas = [...document.querySelectorAll('.cel-check:not(:checked)')].map(cb => cb.value);
+  // Celebrações vinculadas (do novo UI com data-cel-id)
+  const celsSelecionadas = [...document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]')]
+    .map(el => el.dataset.celId).filter(Boolean);
+  const todasCels = window._todasCels || [];
 
   load(true);
 
   // Salvar banda
   const r = await api('editarBanda', {
-    id, nome,
-    liderNome: lidNome,
-    liderMusicoId: lidId,
+    id, nome, liderNome: lidNome, liderMusicoId: lidId,
     emoji: document.getElementById('ebEmoji').value || '🎸',
     membrosIds,
   });
-
   if (!r.ok) { load(false); toast(r.error||'Erro','err'); return; }
 
-  // Atualizar BandasIds em cada celebração selecionada (adicionar esta banda)
-  const todasCels = window._todasCels || [];
+  // Atualizar BandasIds em cada celebração
+  // 1. Adicionar banda nas celebrações selecionadas
   for (const celId of celsSelecionadas) {
     const cel = todasCels.find(c => c.Id === celId);
     if (!cel) continue;
     const ids = (cel.BandasIds||'').split(',').filter(Boolean);
     if (!ids.includes(id)) {
       ids.push(id);
-      await api('editarCelebracao', { id: celId, ...cel, bandasIds: ids });
+      await api('editarCelebracao', {
+        id: celId, nome: cel.Nome, data: (cel.Data||'').split('T')[0],
+        horario: cel.Horario, local: cel.Local, obs: cel.Obs||'',
+        bandasIds: ids, repertorioId: cel.RepertorioId||'',
+        repertorioTipo: cel.RepertorioTipo||'master',
+      });
     }
   }
 
-  // Remover esta banda das celebrações desmarcadas
-  for (const celId of celsNaoSelecionadas) {
-    const cel = todasCels.find(c => c.Id === celId);
-    if (!cel) continue;
-    const ids = (cel.BandasIds||'').split(',').filter(Boolean).filter(bid => bid !== id);
+  // 2. Remover banda das celebrações desmarcadas
+  for (const cel of todasCels) {
     const tinha = (cel.BandasIds||'').split(',').filter(Boolean).includes(id);
-    if (tinha) {
-      await api('editarCelebracao', { id: celId, ...cel, bandasIds: ids });
+    if (tinha && !celsSelecionadas.includes(cel.Id)) {
+      const ids = (cel.BandasIds||'').split(',').filter(Boolean).filter(bid => bid !== id);
+      await api('editarCelebracao', {
+        id: cel.Id, nome: cel.Nome, data: (cel.Data||'').split('T')[0],
+        horario: cel.Horario, local: cel.Local, obs: cel.Obs||'',
+        bandasIds: ids, repertorioId: cel.RepertorioId||'',
+        repertorioTipo: cel.RepertorioTipo||'master',
+      });
     }
   }
 
