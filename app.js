@@ -878,8 +878,8 @@ async function detMusico(id){
         </div>
         <div class="fg"><label>Perfil de acesso</label>
           <select id="edNivel">
-            <option value="musico" ${tokNiv==='musico'||(!tokNiv&&!lider)?'selected':''}>🎵 Músico</option>
-            <option value="liderbanda" ${tokNiv==='liderbanda'||lider?'selected':''}>🎸 Líder de Banda</option>
+            <option value="musico" ${tokNiv==='musico'||(!tokNiv&&!lider&&tokNiv!=='liderequipe'&&tokNiv!=='master')?'selected':''}>🎵 Músico</option>
+            <option value="liderbanda" ${tokNiv==='liderbanda'||(lider&&tokNiv!=='liderequipe'&&tokNiv!=='master')?'selected':''}>🎸 Líder de Banda</option>
             <option value="liderequipe" ${tokNiv==='liderequipe'?'selected':''}>👥 Líder de Equipe</option>
             <option value="master" ${tokNiv==='master'?'selected':''}>⚙️ Master</option>
           </select>
@@ -916,7 +916,7 @@ async function salvarEdMusico(id) {
   const ekl     = document.getElementById('edEkl').value.trim();
   const whats   = document.getElementById('edWa').value.trim();
   const instr   = document.getElementById('edInstr').value.trim();
-  const isLider = (nivel === 'liderbanda') ? 'sim' : 'nao';
+  const isLider = (nivel === 'liderbanda' || nivel === 'liderequipe' || nivel === 'master') ? 'sim' : 'nao';
 
   load(true);
 
