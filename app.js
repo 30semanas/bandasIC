@@ -1714,13 +1714,7 @@ async function loadBiblioteca() {
   load(true);
   const r = await api('getBiblioteca');
   load(false);
-  console.log('loadBiblioteca:', r.ok, r.error||'', r.data ? r.data.length : 0);
-  if (!r.ok) {
-    toast('Erro ao carregar biblioteca: ' + (r.error||'Verifique o login'), 'err');
-    _biblioteca = [];
-  } else {
-    _biblioteca = r.data || [];
-  }
+  _biblioteca = r.ok ? (r.data || []) : [];
   renderBiblioteca();
 }
 
