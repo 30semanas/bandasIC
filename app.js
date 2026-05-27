@@ -1429,6 +1429,68 @@ async function loadCel(){
   }).join('');
 }
 
+async function modalCriarCel(){
+  load(true);
+  const [rRep, rLE] = await Promise.all([api('getRepertorios',{}), api('getLideresEquipe')]);
+  load(false);
+  const reps  = rRep.ok ? rRep.data : [];
+  const lides = rLE.ok  ? rLE.data  : [];
+
+  openM('Nova Celebração',`
+    <div class="fg"><label>Nome *</label><input type="text" id="cNome" placeholder="Ex: Culto Dominical"/></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="fg"><label>Data *</label><input type="date" id="cDt"/></div>
+      <div class="fg"><label>Horário *</label><input type="time" id="cHr"/></div>
+    </div>
+    <div class="fg"><label>Local *</label><input type="text" id="cLoc"/></div>
+    <div class="fg"><label>Observações</label><textarea id="cObs" rows="2"></textarea></div>
+    <div class="fg"><label>Atribuir a Líder de Equipe</label>
+      <select id="cLiderEq">
+        <option value="">— Sem líder de equipe —</option>
+        ${lides.map(l=>`<option value="${l.Id}">${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Repertório</label>
+      <select id="cRep">
+        <option value="">— Sem repertório —</option>
+        ${reps.map(r=>`<option value="${r.Id}">${r.Nome||'—'}</option>`).join('')}
+      </select>
+    </div>
+    <div class="fg"><label>Quem define o repertório</label>
+      <select id="cRepT">
+        <option value="master">⚙️ Master define</option>
+        <option value="liderequipe">👥 Líder de equipe define</option>
+      </select>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarCel()">Criar</button>
+    </div>`);
+}
+
+async function salvarCel(){
+  const nome = document.getElementById('cNome').value.trim();
+  const dt   = document.getElementById('cDt').value;
+  const hr   = document.getElementById('cHr').value;
+  const loc  = document.getElementById('cLoc').value.trim();
+  if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
+  const repId     = document.getElementById('cRep').value;
+  const liderEqId = document.getElementById('cLiderEq').value;
+  load(true);
+  const r=await api('criarCelebracao',{
+    nome, data:dt, horario:hr, local:loc,
+    obs: document.getElementById('cObs').value,
+    bandasIds: [],
+    repertorioId: repId,
+    repertorioTipo: document.getElementById('cRepT').value,
+    liderEquipeId: liderEqId,
+  });
+  load(false);
+  if(!r.ok){toast(r.error||'Erro','err');return;}
+  toast('Celebração criada!','ok'); closeM(); await loadCel();
+}
+
+
 function confExcluirCel(id, nome) {
   if (!confirm('Excluir a celebração "' + nome + '"?\nEsta ação não pode ser desfeita.')) return;
   load(true);
