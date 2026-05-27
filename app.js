@@ -1230,6 +1230,12 @@ function adicionarCelBanda(celId) {
   const cel = (window._todasCels || []).find(c => c.Id === celId);
   if (!cel) return;
 
+  // Bloquear se não tem repertório
+  if (!cel.RepertorioId || cel.RepertorioId.trim() === '') {
+    toast('⚠️ Esta celebração não tem repertório definido. Atribua um repertório antes de vincular a banda.', 'err');
+    return;
+  }
+
   const vazio = document.getElementById('bandaCelsVazio');
   if (vazio) vazio.style.display = 'none';
 
@@ -1274,17 +1280,20 @@ async function salvarEdicaoBanda(id) {
   if (!nome) { toast('Informe o nome','err'); return; }
   if (!lidId) { toast('Selecione um líder','err'); return; }
 
-  // Membros existentes (não removidos)
   const existentes = [...document.querySelectorAll('#ebMembros [data-mid]')]
     .map(el => el.dataset.mid).filter(Boolean);
   const novos = [...document.querySelectorAll('#ebMembros select.bi-musico')]
     .map(s => s.value).filter(Boolean);
   const membrosIds = [...new Set([lidId, ...existentes, ...novos].filter(Boolean))];
 
-  // Celebrações vinculadas (do novo UI com data-cel-id)
   const celsSelecionadas = [...document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]')]
     .map(el => el.dataset.celId).filter(Boolean);
+
   const todasCels = window._todasCels || [];
+  const celAnteriores = todasCels
+    .filter(c => (c.BandasIds||'').split(',').filter(Boolean).includes(id))
+    .map(c => c.Id);
+  const celNovas = celsSelecionadas.filter(cid => !celAnteriores.includes(cid));
 
   load(true);
 
@@ -1296,39 +1305,47 @@ async function salvarEdicaoBanda(id) {
   });
   if (!r.ok) { load(false); toast(r.error||'Erro','err'); return; }
 
-  // Atualizar BandasIds em cada celebração
-  // 1. Adicionar banda nas celebrações selecionadas
+  // Atualizar celebrações
   for (const celId of celsSelecionadas) {
     const cel = todasCels.find(c => c.Id === celId);
     if (!cel) continue;
     const ids = (cel.BandasIds||'').split(',').filter(Boolean);
     if (!ids.includes(id)) {
       ids.push(id);
-      await api('editarCelebracao', {
-        id: celId, nome: cel.Nome, data: (cel.Data||'').split('T')[0],
-        horario: cel.Horario, local: cel.Local, obs: cel.Obs||'',
-        bandasIds: ids, repertorioId: cel.RepertorioId||'',
-        repertorioTipo: cel.RepertorioTipo||'master',
-      });
+      await api('editarCelebracao', { id: celId, nome: cel.Nome, data: (cel.Data||'').split('T')[0], horario: cel.Horario, local: cel.Local, obs: cel.Obs||'', bandasIds: ids, repertorioId: cel.RepertorioId||'', repertorioTipo: cel.RepertorioTipo||'master', liderEquipeId: cel.LiderEquipeId||'' });
     }
   }
-
-  // 2. Remover banda das celebrações desmarcadas
   for (const cel of todasCels) {
     const tinha = (cel.BandasIds||'').split(',').filter(Boolean).includes(id);
     if (tinha && !celsSelecionadas.includes(cel.Id)) {
       const ids = (cel.BandasIds||'').split(',').filter(Boolean).filter(bid => bid !== id);
-      await api('editarCelebracao', {
-        id: cel.Id, nome: cel.Nome, data: (cel.Data||'').split('T')[0],
-        horario: cel.Horario, local: cel.Local, obs: cel.Obs||'',
-        bandasIds: ids, repertorioId: cel.RepertorioId||'',
-        repertorioTipo: cel.RepertorioTipo||'master',
-      });
+      await api('editarCelebracao', { id: cel.Id, nome: cel.Nome, data: (cel.Data||'').split('T')[0], horario: cel.Horario, local: cel.Local, obs: cel.Obs||'', bandasIds: ids, repertorioId: cel.RepertorioId||'', repertorioTipo: cel.RepertorioTipo||'master', liderEquipeId: cel.LiderEquipeId||'' });
     }
   }
 
+  // Criar escalas automáticas para celebrações novas
+  let escalasCreadas = 0;
+  for (const celId of celNovas) {
+    const cel = todasCels.find(c => c.Id === celId);
+    if (!cel) continue;
+    const r2 = await api('criarEscalaAutomatica', {
+      celebracaoId: celId,
+      celebracaoNome: cel.Nome || '',
+      data: (cel.Data||'').split('T')[0],
+      horario: cel.Horario || '',
+      local: cel.Local || '',
+      repertorioId: cel.RepertorioId || '',
+      bandaId: id,
+      bandaNome: nome,
+      musicosIds: membrosIds,
+    });
+    if (r2.ok) escalasCreadas++;
+  }
+
   load(false);
-  toast('Banda atualizada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
+  toast(escalasCreadas > 0
+    ? `Banda atualizada! ${escalasCreadas} escala(s) criada(s) para os músicos ✅`
+    : `Banda atualizada com ${membrosIds.length} integrante(s)! ✅`, 'ok');
   closeM();
   await loadBandas();
 }
