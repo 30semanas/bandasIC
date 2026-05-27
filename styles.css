@@ -33,6 +33,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:
 .hcard-txt{flex:1;}.hcard-txt strong{display:block;font-family:var(--fh);font-size:15px;font-weight:700;}
 .hcard-txt span{font-size:12px;color:var(--text2);}
 .hcard-arr{color:var(--text3);font-size:18px;}
+.home-login-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:24px;margin-top:4px;}
 
 /* AUTH */
 #sLogin{align-items:center;justify-content:center;}
