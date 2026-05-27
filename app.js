@@ -1401,7 +1401,6 @@ async function execRemBanda(){
 // CELEBRAÇÕES
 async function loadCel(){
   load(true); const r=await api('getCelebracoes'); load(false);
-  console.log('loadCel response:', JSON.stringify(r).substring(0,200));
   const list=r.ok?r.data:[];
   const el=document.getElementById('admCelList');
   if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
@@ -1412,29 +1411,49 @@ async function loadCel(){
     <div class="card">
       <div class="ch">
         <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-        <div style="flex:1"><div class="cn">${c.Nome||'—'}</div><div class="cs">⏰ ${c.Horario||''} • 📍 ${c.Local||''}</div></div>
-        <button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>
+        <div style="flex:1">
+          <div class="cn">${c.Nome||'—'}</div>
+          <div class="cs">⏰ ${c.Horario||''} • 📍 ${c.Local||''}</div>
+          ${c.LiderEquipeId ? `<div style="font-size:11px;color:var(--accent2);margin-top:3px">👥 Líder de equipe atribuído</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>
+          <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirCel('${c.Id}','${(c.Nome||'').replace(/'/g,'')}')">🗑</button>
+        </div>
       </div>
       <div style="font-size:12px;color:var(--text2);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
-        <span>🎸 ${c.BandasIds?'Banda vinculada':'Sem banda'}</span>
-        <span>📋 Repertório: ${c.RepertorioTipo==='lider'?'Líder define':'Admin define'}</span>
+        <span>📋 Repertório: ${c.RepertorioTipo==='liderequipe'?'👥 Líder de equipe define':c.RepertorioTipo==='lider'?'🎸 Líder define':'⚙️ Master define'}</span>
       </div>
       ${c.Obs?`<p style="font-size:12px;color:var(--text3);margin-top:6px">${c.Obs}</p>`:''}
-    </div>`; }).join('');
+    </div>`;
+  }).join('');
+}
+
+function confExcluirCel(id, nome) {
+  if (!confirm('Excluir a celebração "' + nome + '"?\nEsta ação não pode ser desfeita.')) return;
+  load(true);
+  api('removerCelebracao', { id }).then(r => {
+    load(false);
+    if (!r.ok) { toast(r.error||'Erro','err'); return; }
+    toast('Celebração excluída!','ok');
+    loadCel();
+  });
 }
 
 async function modalEditarCel(id) {
   load(true);
-  const [rCel, rBandas, rRep] = await Promise.all([api('getCelebracoes'), api('getBandas'), api('getRepertorios',{})]);
+  const [rCel, rRep, rLE] = await Promise.all([
+    api('getCelebracoes'),
+    api('getRepertorios',{}),
+    api('getLideresEquipe'),
+  ]);
   load(false);
   const list = rCel.ok ? rCel.data : [];
   const c = list.find(x => x.Id === id);
   if (!c) { toast('Não encontrado','err'); return; }
-  const bandas = rBandas.ok ? rBandas.data : [];
-  const reps   = rRep.ok   ? rRep.data   : [];
-  const celBandas = (c.BandasIds||'').split(',').filter(Boolean);
+  const reps  = rRep.ok ? rRep.data : [];
+  const lides = rLE.ok  ? rLE.data  : [];
 
-  // Formatar data e horário corretamente para inputs
   const celData = (c.Data||'').includes('T') ? c.Data.split('T')[0] : (c.Data||'');
   const celHora = (c.Horario||'').length > 5 ? c.Horario.substring(0,5) : (c.Horario||'');
 
@@ -1446,6 +1465,13 @@ async function modalEditarCel(id) {
     </div>
     <div class="fg"><label>Local *</label><input type="text" id="ecLoc" value="${(c.Local||'').replace(/"/g,'&quot;')}"/></div>
     <div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${c.Obs||''}</textarea></div>
+    <div class="fg"><label>Atribuir a Líder de Equipe</label>
+      <select id="ecLiderEq">
+        <option value="">— Sem líder de equipe —</option>
+        ${lides.map(l=>`<option value="${l.Id}" ${c.LiderEquipeId===l.Id?'selected':''}>${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
+      </select>
+      ${!lides.length?'<p style="font-size:11px;color:var(--text3);margin-top:4px">Nenhum líder de equipe cadastrado ainda.</p>':''}
+    </div>
     <div class="fg"><label>Repertório</label>
       <select id="ecRep">
         <option value="">— Sem repertório —</option>
@@ -1470,13 +1496,16 @@ async function salvarEdicaoCel(id) {
   const hr   = document.getElementById('ecHr').value;
   const loc  = document.getElementById('ecLoc').value.trim();
   if (!nome||!dt||!hr||!loc) { toast('Preencha os campos obrigatórios','err'); return; }
-  const repId = document.getElementById('ecRep').value;
+  const repId     = document.getElementById('ecRep').value;
+  const liderEl   = document.getElementById('ecLiderEq');
+  const liderEqId = liderEl ? liderEl.value : '';
   load(true);
   const r = await api('editarCelebracao', {
-    id, nome, data:dt, horario:hr, local:loc,
+    id, nome, data: dt, horario: hr, local: loc,
     obs: document.getElementById('ecObs').value,
     repertorioId: repId,
     repertorioTipo: document.getElementById('ecRepT').value,
+    liderEquipeId: liderEqId,
   });
   load(false);
   if (!r.ok) { toast(r.error||'Erro','err'); return; }
@@ -1485,69 +1514,6 @@ async function salvarEdicaoCel(id) {
   await loadCel();
 }
 
-async function modalCriarCel(){
-  load(true);
-  const [rBandas, rRep, rLE] = await Promise.all([api('getBandas'), api('getRepertorios',{}), api('getLideresEquipe')]);
-  load(false);
-  const bandas = rBandas.ok ? rBandas.data : [];
-  const reps   = rRep.ok   ? rRep.data   : [];
-  const lides  = rLE.ok    ? rLE.data    : [];
-
-  openM('Nova Celebração',`
-    <div class="fg"><label>Nome *</label><input type="text" id="cNome" placeholder="Ex: Culto Dominical"/></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data *</label><input type="date" id="cDt"/></div>
-      <div class="fg"><label>Horário *</label><input type="time" id="cHr"/></div>
-    </div>
-    <div class="fg"><label>Local *</label><input type="text" id="cLoc"/></div>
-    <div class="fg"><label>Observações</label><textarea id="cObs" rows="2"></textarea></div>
-    <div class="fg"><label>Atribuir a Líder de Equipe</label>
-      <select id="cLiderEq">
-        <option value="">— Sem líder de equipe —</option>
-        ${lides.map(l=>`<option value="${l.Id}">${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Repertório</label>
-      <select id="cRep">
-        <option value="">— Sem repertório —</option>
-        ${reps.map(r=>`<option value="${r.Id}">${r.Nome||'—'}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Quem define o repertório</label>
-      <select id="cRepT">
-        <option value="master">⚙️ Master define</option>
-        <option value="liderequipe">👥 Líder de equipe define</option>
-      </select>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarCel()">Criar</button>
-    </div>`);
-}
-
-async function salvarCel(){
-  const nome = document.getElementById('cNome').value.trim();
-  const dt   = document.getElementById('cDt').value;
-  const hr   = document.getElementById('cHr').value;
-  const loc  = document.getElementById('cLoc').value.trim();
-  if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
-  const repId     = document.getElementById('cRep').value;
-  const liderEqId = document.getElementById('cLiderEq').value;
-  load(true);
-  const r=await api('criarCelebracao',{
-    nome, data:dt, horario:hr, local:loc,
-    obs: document.getElementById('cObs').value,
-    bandasIds: [],
-    repertorioId: repId,
-    repertorioTipo: document.getElementById('cRepT').value,
-    liderEquipeId: liderEqId,
-  });
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Celebração criada!','ok'); closeM(); await loadCel();
-}
-
-// ESCALAS ADMIN
 async function loadEsc(){
   load(true); const r=await api('getEscalas'); load(false);
   const list=r.ok?r.data:[];
