@@ -635,7 +635,7 @@ async function initAdmin(sess){
 
 function toggleSide(){ _sideOpen=!_sideOpen; document.getElementById('admSide').classList.toggle('open',_sideOpen); }
 
-const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',repertorios:'Repertórios',tokens:'Tokens'};
+const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',repertorios:'Repertórios',biblioteca:'Biblioteca',tokens:'Tokens'};
 const nivelLabel = {master:'Master',liderequipe:'Líder de Equipe',liderbanda:'Líder de Banda',musico:'Músico',admin:'Administrador'};
 
 function apg(name){
@@ -646,7 +646,7 @@ function apg(name){
   if(ni) ni.classList.add('active');
   document.getElementById('admTopTit').textContent=apgTitles[name]||name;
   if(_sideOpen) toggleSide();
-  const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,tokens:loadTokens};
+  const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens};
   if(loaders[name]) loaders[name]();
 }
 
@@ -1474,9 +1474,10 @@ async function loadEsc(){
 // REPERTÓRIOS + MÚSICAS ADMIN
 async function loadRepertoriosAdmin(){
   load(true);
-  const [rRep, rMus] = await Promise.all([api('getRepertorios',{}), api('getMusicas')]);
+  const [rRep, rMus, rBib] = await Promise.all([api('getRepertorios',{}), api('getMusicas'), api('getBiblioteca')]);
   load(false);
   _aMusicas = rMus.ok ? rMus.data : [];
+  _biblioteca = rBib.ok ? rBib.data : [];
 
   // Render repertórios
   // Botão de adicionar música fica apenas na biblioteca, não no header da página
@@ -1489,6 +1490,8 @@ async function loadRepertoriosAdmin(){
     repEl.innerHTML = reps.map(r => {
       const musIds = (r.MusicasIds||'').split(',').filter(Boolean);
       const musNomes = musIds.map(mid => {
+        const bm = _biblioteca.find(x => x.Id === mid);
+        if (bm) return bm.Titulo;
         const m = _aMusicas.find(x => x.Id === mid);
         return m ? m.Nome : null;
       }).filter(Boolean);
@@ -1512,25 +1515,24 @@ async function loadRepertoriosAdmin(){
 
 async function modalCriarRepertorioAdmin() {
   load(true);
-  const rM = await api('getMusicas');
+  const rB = await api('getBiblioteca');
   load(false);
-  const mus = rM.ok ? rM.data.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||'')) : [];
+  window._repBiblioteca = rB.ok ? rB.data.sort((a,b)=>(a.Titulo||'').localeCompare(b.Titulo||'')) : [];
+  window._repSelecionadas = [];
 
   openM('Novo Repertório', `
     <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
 
     <div class="fg">
-      <label>Músicas</label>
-      <p style="font-size:11px;color:var(--text3);margin-bottom:8px">Selecione as músicas para este repertório</p>
-      <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:10px;padding:10px">
-        ${mus.length ? mus.map(m=>`
-          <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background='var(--bg3)'">
-            <input type="checkbox" value="${m.Id}" style="width:16px;height:16px;flex-shrink:0"/>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600">${m.Nome||'—'}</div>
-              <div style="font-size:11px;color:var(--text2);margin-top:2px">${m.Artista||''} ${m.Tom?'• Tom: <strong style=color:var(--accent2)>'+m.Tom+'</strong>':''} ${m.Bpm?'• '+m.Bpm+' BPM':''}</div>
-            </div>
-          </label>`).join('') : '<p style="font-size:13px;color:var(--text3);text-align:center;padding:20px">Nenhuma música cadastrada ainda. Adicione músicas na biblioteca abaixo.</p>'}
+      <label>Buscar músicas da biblioteca</label>
+      <input type="text" id="repBusca" placeholder="Digite o título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
+      <div id="repSugestoes" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto"></div>
+    </div>
+
+    <div class="fg">
+      <label>Músicas selecionadas</label>
+      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:40px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
+        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center">Nenhuma música adicionada</p>
       </div>
     </div>
 
@@ -1540,15 +1542,90 @@ async function modalCriarRepertorioAdmin() {
     </div>`);
 }
 
+function buscarRepMusica(query) {
+  const bib = window._repBiblioteca || [];
+  const div = document.getElementById('repSugestoes');
+  if (!query.trim()) { div.style.display='none'; return; }
+  const q = query.toLowerCase();
+  const results = bib.filter(m =>
+    (m.Titulo||'').toLowerCase().includes(q) ||
+    (m.Composicao||'').toLowerCase().includes(q) ||
+    (m.Versao||'').toLowerCase().includes(q)
+  ).slice(0, 8);
+  if (!results.length) { div.style.display='none'; return; }
+  div.style.display = 'block';
+  div.innerHTML = results.map(m => `
+    <div onclick="addRepMusica('${m.Id}')"
+         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s"
+         onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background=''">
+      <div style="font-size:13px;font-weight:600">${m.Titulo||'—'}</div>
+      <div style="font-size:11px;color:var(--text2)">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''} <span class="badge b-agend" style="margin-left:4px">${m.Categoria||''}</span></div>
+    </div>`).join('');
+}
+
+function addRepMusica(id) {
+  const bib = window._repBiblioteca || [];
+  const sel = window._repSelecionadas || [];
+  const m = bib.find(x => x.Id === id);
+  if (!m || sel.find(x => x.Id === id)) {
+    document.getElementById('repSugestoes').style.display='none';
+    document.getElementById('repBusca').value='';
+    return;
+  }
+  sel.push(m);
+  window._repSelecionadas = sel;
+  renderRepSelecionadas();
+  document.getElementById('repSugestoes').style.display='none';
+  document.getElementById('repBusca').value='';
+}
+
+function removerRepMusica(id) {
+  window._repSelecionadas = (window._repSelecionadas||[]).filter(m => m.Id !== id);
+  renderRepSelecionadas();
+}
+
+function renderRepSelecionadas() {
+  const sel = window._repSelecionadas || [];
+  const el = document.getElementById('repSelecionadas');
+  const vazio = document.getElementById('repVazio');
+  if (!sel.length) {
+    if(vazio) vazio.style.display='block';
+    const items = el.querySelectorAll('.rep-item');
+    items.forEach(i=>i.remove());
+    return;
+  }
+  if(vazio) vazio.style.display='none';
+  // Remove old items and re-render
+  el.querySelectorAll('.rep-item').forEach(i=>i.remove());
+  sel.forEach((m,i) => {
+    const div = document.createElement('div');
+    div.className = 'rep-item';
+    div.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg4);border-radius:8px';
+    div.innerHTML = `
+      <span style="font-size:11px;color:var(--text3);font-weight:700;width:20px">${i+1}</span>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600">${m.Titulo||'—'}</div>
+        <div style="font-size:11px;color:var(--text2)">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
+      </div>
+      ${m.Link?`<a href="${m.Link}" target="_blank" style="color:var(--accent2);font-size:12px;text-decoration:none">▶</a>`:''}
+      <button onclick="removerRepMusica('${m.Id}')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px">✕</button>`;
+    el.appendChild(div);
+  });
+}
+
 async function salvarRepAdmin() {
   const nome = document.getElementById('rNome').value.trim();
-  if (!nome) { toast('Informe o nome','err'); return; }
-  const ids = [...document.querySelectorAll('#mBody input[type=checkbox]:checked')].map(i=>i.value);
+  if (!nome) { toast('Informe o nome do repertório','err'); return; }
+  const sel = window._repSelecionadas || [];
+  if (!sel.length) { toast('Adicione ao menos uma música','err'); return; }
+  const ids = sel.map(m => m.Id);
   load(true);
-  const r = await api('criarRepertorio',{nome, bandaId:'', musicasIds:ids});
+  const r = await api('criarRepertorio', { nome, bandaId:'', musicasIds: ids });
   load(false);
   if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Repertório criado! ✅','ok'); closeM(); await loadRepertoriosAdmin();
+  toast('Repertório criado com ' + ids.length + ' música(s)! ✅','ok');
+  closeM();
+  await loadRepertoriosAdmin();
 }
 
 async function modalEditarRepertorio(id) {
@@ -1587,12 +1664,15 @@ async function modalEditarRepertorio(id) {
 async function salvarEditarRepAdmin(id) {
   const nome = document.getElementById('erNome').value.trim();
   if (!nome) { toast('Informe o nome','err'); return; }
-  const ids = [...document.querySelectorAll('#mBody input[type=checkbox]:checked')].map(i=>i.value);
+  const sel = window._repSelecionadas || [];
+  const ids = sel.map(m => m.Id);
   load(true);
-  const r = await api('editarRepertorio',{id, nome, musicasIds:ids});
+  const r = await api('editarRepertorio', { id, nome, musicasIds: ids });
   load(false);
   if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Repertório atualizado! ✅','ok'); closeM(); await loadRepertoriosAdmin();
+  toast('Repertório atualizado com ' + ids.length + ' música(s)! ✅','ok');
+  closeM();
+  await loadRepertoriosAdmin();
 }
 
 // MÚSICAS ADMIN
@@ -1617,6 +1697,97 @@ function renderAMusicas(list){
 }
 
 // TOKENS
+// ===== BIBLIOTECA =====
+let _biblioteca = [];
+
+async function loadBiblioteca() {
+  load(true);
+  const r = await api('getBiblioteca');
+  load(false);
+  _biblioteca = r.ok ? r.data : [];
+  renderBiblioteca();
+}
+
+function renderBiblioteca() {
+  const el = document.getElementById('admBibList');
+  if (!el) return;
+  if (!_biblioteca.length) {
+    el.innerHTML = empty('🎵', 'Nenhuma música cadastrada ainda');
+    return;
+  }
+  _biblioteca.sort((a,b) => (a.Titulo||'').localeCompare(b.Titulo||''));
+  el.innerHTML = _biblioteca.map(m => `
+    <div class="li">
+      <div class="li-info">
+        <div class="li-name">🎵 ${m.Titulo||'—'} ${m.TituloOriginal&&m.TituloOriginal!==m.Titulo?`<span style="font-size:11px;color:var(--text3)">(${m.TituloOriginal})</span>`:''}
+          <span class="badge b-agend" style="margin-left:8px">${m.Categoria||''}</span>
+        </div>
+        <div class="li-sub">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
+      </div>
+      <div class="li-r">
+        ${m.Link?`<a href="${m.Link}" target="_blank" class="btn-primary sm" style="text-decoration:none">▶</a>`:''}
+        <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="removerBib('${m.Id}','${(m.Titulo||'').replace(/'/g,'')}')">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+function modalAddBiblioteca() {
+  openM('Adicionar Música à Biblioteca', `
+    <div class="fg"><label>Título *</label><input type="text" id="bibTit" placeholder="Ex: A Alegria do Senhor"/></div>
+    <div class="fg"><label>Título Original</label><input type="text" id="bibTitOrig" placeholder="Título na língua original"/></div>
+    <div class="fg"><label>Composição *</label><input type="text" id="bibComp" placeholder="Ex: Fernandinho"/></div>
+    <div class="fg"><label>Versão</label><input type="text" id="bibVers" placeholder="Ex: Fernandinho, Ministério Zoe..."/></div>
+    <div class="fg"><label>Categoria</label>
+      <select id="bibCat">
+        <option value="Nacional">Nacional</option>
+        <option value="Internacional">Internacional</option>
+        <option value="Hino">Hino</option>
+        <option value="Gospel Pop">Gospel Pop</option>
+        <option value="Contemporâneo">Contemporâneo</option>
+        <option value="Clássico">Clássico</option>
+      </select>
+    </div>
+    <div class="fg"><label>Link *</label><input type="text" id="bibLink" placeholder="https://youtu.be/..."/></div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="salvarBiblioteca()">Adicionar</button>
+    </div>`);
+}
+
+async function salvarBiblioteca() {
+  const titulo = document.getElementById('bibTit').value.trim();
+  const comp   = document.getElementById('bibComp').value.trim();
+  const link   = document.getElementById('bibLink').value.trim();
+  if (!titulo) { toast('Título é obrigatório','err'); return; }
+  if (!comp)   { toast('Composição é obrigatória','err'); return; }
+  if (!link)   { toast('Link é obrigatório','err'); return; }
+  load(true);
+  const r = await api('adicionarBiblioteca', {
+    titulo,
+    tituloOriginal: document.getElementById('bibTitOrig').value.trim(),
+    composicao: comp,
+    versao:   document.getElementById('bibVers').value.trim(),
+    categoria:document.getElementById('bibCat').value,
+    link,
+  });
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Música adicionada à biblioteca! 🎵','ok');
+  closeM();
+  await loadBiblioteca();
+}
+
+async function removerBib(id, titulo) {
+  if (!confirm('Remover "' + titulo + '" da biblioteca?')) return;
+  load(true);
+  const r = await api('removerBiblioteca', { id });
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Música removida!','ok');
+  await loadBiblioteca();
+}
+
+
 async function loadTokens(){
   load(true); const r=await api('getTokens'); load(false);
   const list=r.ok?r.data:[];
