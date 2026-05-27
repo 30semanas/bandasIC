@@ -31,6 +31,23 @@ function clearSess(){ sessionStorage.removeItem('bic'); }
 // ===== NAV =====
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); window.scrollTo(0,0); }
 
+// Login pela tela home com campo único de token
+async function doLoginHome() {
+  const token = document.getElementById('homeToken').value.trim();
+  if (!token) { toast('Digite seu token de acesso','err'); return; }
+  load(true);
+  const r = await api('login', { token });
+  load(false);
+  if (!r.ok) { toast(r.error || 'Token inválido. Verifique e tente novamente.','err'); return; }
+  saveSess(r);
+  toast('Bem-vindo, ' + r.nome + '! 🎵','ok');
+  if (r.nivel==='master')          initAdmin(r);
+  else if (r.nivel==='liderequipe')initLiderEquipe(r);
+  else if (r.nivel==='liderbanda') initLider(r);
+  else if (r.nivel==='musico')     initVol(r);
+  else toast('Nível desconhecido: ' + r.nivel,'err');
+}
+
 // Navegar para tela de login (chamada pelos botões da home)
 function irLogin(title, nivel) {
   _loginNivel = nivel;
@@ -735,10 +752,14 @@ async function execAprovar(){
   const {id,tipo}=_pendAct; _pendAct=null; closeM();
   const i=_aInsc.find(x=>x.Id===id); if(!i) return;
   load(true);
-  const r=await api('aprovarMusico',{id,tipo,nome:i.Nome,eklesia:i.Eklesia,whatsapp:String(i.WhatsApp),instrumentos:i.Instrumentos});
+  const r=await api('aprovarMusico',{id,tipo,nome:i.Nome,eklesia:i.Eklesia,whatsapp:String(i.WhatsApp||''),instrumentos:i.Instrumentos});
   load(false);
   if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast(tipo==='aprovado'?i.Nome+' aprovado(a)! Gere o token em Tokens.':i.Nome+' reprovado(a)','info');
+  if(tipo==='aprovado' && r.token){
+    toast(i.Nome+' aprovado! Token: '+r.token+' 🎵','ok');
+  } else {
+    toast(tipo==='aprovado'?i.Nome+' aprovado!':i.Nome+' reprovado(a)','info');
+  }
   closeD(); await loadInsc();
 }
 
@@ -857,8 +878,10 @@ async function detMusico(id){
         </div>
         <div class="fg"><label>Perfil de acesso</label>
           <select id="edNivel">
-            <option value="voluntario" ${!lider?'selected':''}>🎵 Voluntário</option>
-            <option value="lider" ${lider?'selected':''}>🎸 Líder de Banda</option>
+            <option value="musico" ${tokNiv==='musico'||(!tokNiv&&!lider)?'selected':''}>🎵 Músico</option>
+            <option value="liderbanda" ${tokNiv==='liderbanda'||lider?'selected':''}>🎸 Líder de Banda</option>
+            <option value="liderequipe" ${tokNiv==='liderequipe'?'selected':''}>👥 Líder de Equipe</option>
+            <option value="master" ${tokNiv==='master'?'selected':''}>⚙️ Master</option>
           </select>
         </div>
         <button class="btn-primary sm" onclick="salvarEdMusico('${id}')">💾 Salvar alterações</button>
@@ -869,17 +892,19 @@ async function detMusico(id){
       <h3>Token de acesso</h3>
       ${tokEx ? `
         <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN ATUAL</div>
-          <div style="font-family:monospace;font-size:18px;font-weight:700;color:var(--accent2);letter-spacing:2px">${tokStr}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${tokNiv}</div>
+          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
+          <div style="font-family:monospace;font-size:20px;font-weight:700;color:var(--accent2);letter-spacing:3px">${tokStr}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${nivelLabel[tokNiv]||tokNiv}</div>
         </div>
         <div class="arow">
           <a class="btn-wa" href="https://wa.me/55${waNum}?text=${msgToken}" target="_blank">💬 Notificar no WhatsApp</a>
-          <button class="btn-ghost sm" onclick="navigator.clipboard.writeText('${tokStr}').then(()=>toast('Copiado!','ok'))">📋 Copiar</button>
+          <button class="btn-ghost sm" onclick="navigator.clipboard.writeText('${tokStr}').then(()=>toast('Token copiado!','ok'))">📋 Copiar</button>
         </div>
       ` : `
-        <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Sem token. Defina o perfil acima e clique em gerar:</p>
-        <button class="btn-primary sm" onclick="gerarTokMusico('${id}')">🔑 Gerar token</button>
+        <div style="background:rgba(251,191,36,.08);border:1px solid var(--yellow);border-radius:10px;padding:14px;text-align:center">
+          <p style="font-size:13px;color:var(--yellow);margin-bottom:4px">⚠️ Token ainda não gerado</p>
+          <p style="font-size:12px;color:var(--text3)">Salve o perfil de acesso acima para gerar automaticamente.</p>
+        </div>
       `}
     </div>`;
   openD();
@@ -891,7 +916,7 @@ async function salvarEdMusico(id) {
   const ekl     = document.getElementById('edEkl').value.trim();
   const whats   = document.getElementById('edWa').value.trim();
   const instr   = document.getElementById('edInstr').value.trim();
-  const isLider = nivel === 'lider' ? 'sim' : 'nao';
+  const isLider = (nivel === 'liderbanda') ? 'sim' : 'nao';
 
   load(true);
 
@@ -899,36 +924,33 @@ async function salvarEdMusico(id) {
   const r = await api('editarMusico', {
     id, nome, eklesia: ekl, whatsapp: whats, instrumentos: instr, isLider,
   });
-
-  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar', 'err'); return; }
+  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar','err'); return; }
 
   // 2. Promover IsLider se necessário
   if (isLider === 'sim') await api('promoverLider', { musicoId: id });
 
-  // 3. Verificar token atual
+  // 3. Verificar token
   const rT = await api('getTokens');
   const toks = rT.ok ? rT.data : [];
   const tokEx = toks.find(t => String(t.MusicoId) === String(id));
 
   if (!tokEx) {
-    // Sem token: gerar novo com o nível escolhido
+    // Gerar token automaticamente
     const rG = await api('gerarToken', { nome, eklesia: ekl, nivel, musicoId: id });
     load(false);
-    if (rG.ok) toast('Dados salvos! Token gerado: ' + rG.token + ' ✅', 'ok');
-    else toast('Dados salvos! Erro ao gerar token: ' + (rG.error||''), 'ok');
-  } else if ((tokEx.Nivel || '') !== nivel) {
-    // Token existe com nível diferente: atualizar nível do token existente
-    const rN = await api('atualizarNivelToken', { musicoId: id, nivel, nome });
-    load(false);
-    const novoTok = tokEx.Token || '';
-    if (rN.ok) {
-      toast('Perfil atualizado para ' + (nivel==='lider'?'🎸 Líder':'🎵 Voluntário') + '! Token: ' + novoTok + ' ✅', 'ok');
+    if (rG.ok) {
+      toast('Dados salvos! Token gerado: ' + rG.token + ' ✅','ok');
     } else {
-      toast('Dados salvos! ' + (rN.error||''), 'info');
+      toast('Dados salvos! (' + (rG.error||'erro ao gerar token') + ')','info');
     }
+  } else if (tokEx.Nivel !== nivel) {
+    // Atualizar nível do token existente
+    await api('atualizarNivelToken', { musicoId: id, nivel, nome });
+    load(false);
+    toast('Perfil atualizado → ' + (nivelLabel[nivel]||nivel) + ' ✅','ok');
   } else {
     load(false);
-    toast('Dados salvos! ✅', 'ok');
+    toast('Dados salvos! ✅','ok');
   }
 
   closeD();
