@@ -260,27 +260,72 @@ function renderVEsc(){
 
 async function detEscVol(id){
   load(true);
-  const r = await api('getEscalaById',{id});
+  const [rEsc, rBib] = await Promise.all([api('getEscalaById',{id}), api('getBiblioteca')]);
   load(false);
-  if(!r.ok){toast('Erro','err');return;}
-  const e=r.data, d=pd(e.Data), s=getSess();
-  const meu=(r.aceites||[]).find(a=>String(a.MusicoId)===String(s.mid));
+  if(!rEsc.ok){toast('Erro','err');return;}
+  const e=rEsc.data, d=pd(e.Data), s=getSess();
+  const meu=(rEsc.aceites||[]).find(a=>String(a.MusicoId)===String(s.mid));
   const st=meu?.Status||meu?.status||'pendente';
-  document.getElementById('dTitle').textContent=e.Titulo||'Escala';
-  document.getElementById('dBody').innerHTML=`
+  const jaAceita = st === 'aceita';
+  const bib = rBib.ok ? rBib.data : [];
+
+  // Buscar músicas do repertório
+  let musicas = [];
+  if (e.RepertorioId) {
+    const rRep = await api('getRepertorios',{});
+    if (rRep.ok) {
+      const rep = rRep.data.find(r => r.Id === e.RepertorioId);
+      if (rep && rep.MusicasIds) {
+        const ids = rep.MusicasIds.split(',').filter(Boolean);
+        musicas = ids.map(mid => bib.find(m => m.Id === mid)).filter(Boolean);
+      }
+    }
+  }
+
+  document.getElementById('dTitle').textContent = e.Titulo||'Escala';
+  document.getElementById('dBody').innerHTML = `
     <div class="igrid">
       <div class="ii"><label>Data</label><span>${d.day}/${d.mon}/${d.year}</span></div>
       <div class="ii"><label>Horário</label><span>${e.Horario||'—'}</span></div>
       <div class="ii"><label>Local</label><span>${e.Local||'—'}</span></div>
       <div class="ii"><label>Banda</label><span>${e.BandaNome||'—'}</span></div>
     </div>
-    <div class="dsec"><h3>Minha resposta</h3>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Atual: ${badge(st)}</p>
-      <div class="arow">
-        <button class="btn-green" onclick="respEsc('${e.Id}','aceita')">✅ Aceitar</button>
-        <button class="btn-red" onclick="respEsc('${e.Id}','recusada')">❌ Recusar</button>
+
+    ${musicas.length ? `
+    <div class="dsec">
+      <h3>📋 Repertório</h3>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${musicas.map((m,i) => `
+          <div class="li" style="cursor:default">
+            <div style="width:24px;height:24px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
+            <div class="li-info">
+              <div class="li-name">${m.Titulo||'—'}</div>
+              <div class="li-sub">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
+            </div>
+            ${m.Link ? `<a href="${m.Link}" target="_blank" class="btn-primary sm" style="text-decoration:none;padding:5px 10px">▶</a>` : ''}
+          </div>`).join('')}
       </div>
-      ${st==='recusada' && meu && meu.Justificativa ? `<div style="margin-top:12px;padding:10px;background:rgba(248,113,113,.1);border:1px solid var(--red);border-radius:8px"><p style="font-size:12px;color:var(--red);font-weight:600;margin-bottom:4px">Justificativa de recusa:</p><p style="font-size:13px;color:var(--text2)">${meu.Justificativa}</p></div>` : ''}
+    </div>` : ''}
+
+    <div class="dsec">
+      <h3>Minha resposta</h3>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Atual: ${badge(st)}</p>
+      ${jaAceita ? `
+        <div style="padding:12px;background:rgba(52,211,153,.08);border:1px solid var(--green);border-radius:10px">
+          <p style="font-size:13px;color:var(--green)">✅ Você aceitou esta escala.</p>
+          <p style="font-size:12px;color:var(--text3);margin-top:4px">Apenas o Master pode remover sua participação.</p>
+        </div>
+      ` : st === 'recusada' ? `
+        <div style="padding:12px;background:rgba(248,113,113,.08);border:1px solid var(--red);border-radius:10px">
+          <p style="font-size:13px;color:var(--red)">❌ Você recusou esta escala.</p>
+          ${meu?.Justificativa ? `<p style="font-size:12px;color:var(--text3);margin-top:4px">Justificativa: "${meu.Justificativa}"</p>` : ''}
+        </div>
+      ` : `
+        <div class="arow">
+          <button class="btn-green" onclick="respEsc('${e.Id}','aceita')">✅ Aceitar</button>
+          <button class="btn-red" onclick="respEsc('${e.Id}','recusada')">❌ Recusar</button>
+        </div>
+      `}
     </div>`;
   openD();
 }
@@ -1209,10 +1254,11 @@ function buscarCelParaBanda(query) {
   div.style.display = 'block';
   div.innerHTML = cels.map(cel => {
     const d = pd(cel.Data||'');
+    const temRep = cel.RepertorioId && cel.RepertorioId.trim() !== '';
     return `<div onclick="adicionarCelBanda('${cel.Id}')"
-      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);opacity:${temRep?1:0.5}"
       onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
-      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
+      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'} ${!temRep?'<span style="font-size:10px;color:var(--red)">⚠️ sem repertório</span>':''}</div>
       <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
     </div>`;
   }).join('');
