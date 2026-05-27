@@ -1098,6 +1098,7 @@ async function modalEditarBanda(id) {
 function addLinhaIntegrante() {
   // Para criar banda (#bMembros)
   const mus = window._bandaMusicos || [];
+  console.log('addLinhaIntegrante: músicos disponíveis:', mus.length, mus.map(m=>m.Nome));
   const instrList = [...new Set(
     mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean))
   )].sort();
@@ -1353,12 +1354,6 @@ async function modalEditarCel(id) {
     </div>
     <div class="fg"><label>Local *</label><input type="text" id="ecLoc" value="${(c.Local||'').replace(/"/g,'&quot;')}"/></div>
     <div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${c.Obs||''}</textarea></div>
-    <div class="fg"><label>Banda vinculada</label>
-      <select id="ecBanda">
-        <option value="">— Sem banda —</option>
-        ${bandas.map(b=>`<option value="${b.Id}" ${celBandas.includes(b.Id)?'selected':''}>${b.Nome||'—'}</option>`).join('')}
-      </select>
-    </div>
     <div class="fg"><label>Repertório</label>
       <select id="ecRep">
         <option value="">— Sem repertório —</option>
@@ -1367,8 +1362,8 @@ async function modalEditarCel(id) {
     </div>
     <div class="fg"><label>Quem define o repertório</label>
       <select id="ecRepT">
-        <option value="admin" ${c.RepertorioTipo!=='lider'?'selected':''}>⚙️ Administrador define</option>
-        <option value="lider" ${c.RepertorioTipo==='lider'?'selected':''}>🎸 Líder de banda define</option>
+        <option value="master" ${c.RepertorioTipo==='master'||c.RepertorioTipo==='admin'||!c.RepertorioTipo?'selected':''}>⚙️ Master define</option>
+        <option value="liderequipe" ${c.RepertorioTipo==='liderequipe'?'selected':''}>👥 Líder de equipe define</option>
       </select>
     </div>
     <div class="mfoot">
@@ -1383,13 +1378,11 @@ async function salvarEdicaoCel(id) {
   const hr   = document.getElementById('ecHr').value;
   const loc  = document.getElementById('ecLoc').value.trim();
   if (!nome||!dt||!hr||!loc) { toast('Preencha os campos obrigatórios','err'); return; }
-  const bandaId = document.getElementById('ecBanda').value;
-  const repId   = document.getElementById('ecRep').value;
+  const repId = document.getElementById('ecRep').value;
   load(true);
   const r = await api('editarCelebracao', {
     id, nome, data:dt, horario:hr, local:loc,
     obs: document.getElementById('ecObs').value,
-    bandasIds: bandaId ? [bandaId] : [],
     repertorioId: repId,
     repertorioTipo: document.getElementById('ecRepT').value,
   });
@@ -1422,12 +1415,6 @@ async function modalCriarCel(){
         ${lides.map(l=>`<option value="${l.Id}">${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
       </select>
     </div>
-    <div class="fg"><label>Banda</label>
-      <select id="cBanda">
-        <option value="">— Sem banda —</option>
-        ${bandas.map(b=>`<option value="${b.Id}">${b.Nome||'—'}</option>`).join('')}
-      </select>
-    </div>
     <div class="fg"><label>Repertório</label>
       <select id="cRep">
         <option value="">— Sem repertório —</option>
@@ -1436,8 +1423,8 @@ async function modalCriarCel(){
     </div>
     <div class="fg"><label>Quem define o repertório</label>
       <select id="cRepT">
-        <option value="admin">⚙️ Master define</option>
-        <option value="lider">🎸 Líder de banda define</option>
+        <option value="master">⚙️ Master define</option>
+        <option value="liderequipe">👥 Líder de equipe define</option>
       </select>
     </div>
     <div class="mfoot">
@@ -1452,14 +1439,13 @@ async function salvarCel(){
   const hr   = document.getElementById('cHr').value;
   const loc  = document.getElementById('cLoc').value.trim();
   if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
-  const bandaId    = document.getElementById('cBanda').value;
-  const repId      = document.getElementById('cRep').value;
-  const liderEqId  = document.getElementById('cLiderEq').value;
+  const repId     = document.getElementById('cRep').value;
+  const liderEqId = document.getElementById('cLiderEq').value;
   load(true);
   const r=await api('criarCelebracao',{
     nome, data:dt, horario:hr, local:loc,
     obs: document.getElementById('cObs').value,
-    bandasIds: bandaId ? [bandaId] : [],
+    bandasIds: [],
     repertorioId: repId,
     repertorioTipo: document.getElementById('cRepT').value,
     liderEquipeId: liderEqId,
