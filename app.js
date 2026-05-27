@@ -1095,21 +1095,67 @@ async function modalEditarBanda(id) {
   window._bandaId = id;
 }
 
+function addLinhaIntegrante() {
+  // Para criar banda (#bMembros)
+  const mus = window._bandaMusicos || [];
+  const instrList = [...new Set(
+    mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean))
+  )].sort();
+  const container = document.getElementById('bMembros');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
+  div.innerHTML =
+    '<select class="bi-instr" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
+    '<option value="">Instrumento...</option>' +
+    instrList.map(i => '<option value="' + i + '">' + i + '</option>').join('') +
+    '</select>' +
+    '<select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
+    '<option value="">— Selecione instrumento —</option>' +
+    '</select>' +
+    '<button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>';
+  // Bind change event
+  const instrSel = div.querySelector('.bi-instr');
+  instrSel.addEventListener('change', function() {
+    const instr = this.value;
+    const filtrados = mus.filter(m =>
+      (m.Instrumentos||'').split(',').map(x=>x.trim()).includes(instr)
+    );
+    const musSel = div.querySelector('.bi-musico');
+    musSel.innerHTML = '<option value="">— Selecione músico —</option>' +
+      filtrados.map(m => '<option value="' + m.Id + '">' + (m.Nome||'—') + '</option>').join('');
+  });
+  container.appendChild(div);
+}
+
 function addLinhaIntegranteEd() {
   const mus = window._bandaMusicos || [];
-  const instrList = [...new Set(mus.flatMap(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean)))].sort();
+  const instrList = [...new Set(
+    mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean))
+  )].sort();
   const container = document.getElementById('ebMembros');
+  if (!container) return;
   const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center';
-  div.innerHTML = `
-    <select class="bi-instr" onchange="filtrarMusBandaEd(this)" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
-      <option value="">Instrumento...</option>
-      ${instrList.map(i=>`<option value="${i}">${i}</option>`).join('')}
-    </select>
-    <select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:13px">
-      <option value="">— Selecione instrumento —</option>
-    </select>
-    <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px">✕</button>`;
+  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
+  div.innerHTML =
+    '<select class="bi-instr" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
+    '<option value="">Instrumento...</option>' +
+    instrList.map(i => '<option value="' + i + '">' + i + '</option>').join('') +
+    '</select>' +
+    '<select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
+    '<option value="">— Selecione instrumento —</option>' +
+    '</select>' +
+    '<button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>';
+  const instrSel = div.querySelector('.bi-instr');
+  instrSel.addEventListener('change', function() {
+    const instr = this.value;
+    const filtrados = mus.filter(m =>
+      (m.Instrumentos||'').split(',').map(x=>x.trim()).includes(instr)
+    );
+    const musSel = div.querySelector('.bi-musico');
+    musSel.innerHTML = '<option value="">— Selecione músico —</option>' +
+      filtrados.map(m => '<option value="' + m.Id + '">' + (m.Nome||'—') + '</option>').join('');
+  });
   container.appendChild(div);
 }
 
