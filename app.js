@@ -1733,18 +1733,72 @@ async function loadBiblioteca() {
   const r = await api('getBiblioteca');
   load(false);
   _biblioteca = r.ok ? (r.data || []) : [];
+
+  // Inserir campo de busca antes da lista se não existir
+  const el = document.getElementById('admBibList');
+  const page = document.getElementById('ap-biblioteca');
+  if (page && !document.getElementById('bibBuscaWrap')) {
+    const wrap = document.createElement('div');
+    wrap.id = 'bibBuscaWrap';
+    wrap.style.cssText = 'margin-bottom:16px;position:relative';
+    wrap.innerHTML = `
+      <div style="position:relative">
+        <input type="text" id="bibBusca"
+          placeholder="🔍 Buscar por título, compositor, versão ou categoria..."
+          oninput="renderBiblioteca()"
+          style="width:100%;padding:11px 44px 11px 16px;background:var(--bg2);border:1px solid var(--border);
+                 border-radius:10px;color:var(--text);font-family:var(--font);font-size:14px;outline:none;
+                 transition:border-color .2s"/>
+        <span id="bibBuscaCount" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);
+              font-size:12px;color:var(--text3)"></span>
+      </div>`;
+    page.insertBefore(wrap, el);
+
+    // Focus style
+    document.getElementById('bibBusca').addEventListener('focus', function() {
+      this.style.borderColor = 'var(--accent)';
+      this.style.boxShadow = '0 0 0 3px rgba(124,111,247,.12)';
+    });
+    document.getElementById('bibBusca').addEventListener('blur', function() {
+      this.style.borderColor = 'var(--border)';
+      this.style.boxShadow = 'none';
+    });
+  }
+
   renderBiblioteca();
 }
 
-function renderBiblioteca() {
+function renderBiblioteca(filtro) {
   const el = document.getElementById('admBibList');
   if (!el) return;
-  if (!_biblioteca.length) {
+
+  let lista = [..._biblioteca].sort((a,b) => (a.Titulo||'').localeCompare(b.Titulo||''));
+
+  // Aplicar filtro se houver
+  const q = (filtro || document.getElementById('bibBusca')?.value || '').toLowerCase().trim();
+  if (q) {
+    lista = lista.filter(m =>
+      (m.Titulo||'').toLowerCase().includes(q) ||
+      (m.Composicao||'').toLowerCase().includes(q) ||
+      (m.Versao||'').toLowerCase().includes(q) ||
+      (m.Categoria||'').toLowerCase().includes(q)
+    );
+  }
+
+  if (!lista.length && !q) {
     el.innerHTML = empty('🎵', 'Nenhuma música cadastrada ainda');
     return;
   }
-  _biblioteca.sort((a,b) => (a.Titulo||'').localeCompare(b.Titulo||''));
-  el.innerHTML = _biblioteca.map(m => `
+  if (!lista.length && q) {
+    el.innerHTML = `<p style="text-align:center;padding:32px;color:var(--text3)">Nenhuma música encontrada para "<strong>${q}</strong>"</p>`;
+    return;
+  }
+
+  // Atualizar contador
+  const countEl = document.getElementById('bibBuscaCount');
+  if (countEl) countEl.textContent = lista.length + ' / ' + _biblioteca.length;
+
+  el.innerHTML = lista.map(m => `
     <div class="li">
       <div class="li-info">
         <div class="li-name">🎵 ${m.Titulo||'—'} ${m.TituloOriginal&&m.TituloOriginal!==m.Titulo?`<span style="font-size:11px;color:var(--text3)">(${m.TituloOriginal})</span>`:''}
