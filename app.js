@@ -598,9 +598,11 @@ async function detEscLid(id){
       ${ac.length?`<div style="display:flex;flex-direction:column;gap:8px">${ac.map(a=>{
         const just=a.Justificativa||a.justificativa||'';
         const st=a.Status||a.status||'pendente';
+        const nome=a.MusicoNome||a.MusicoId||'—';
         return `<div class="li" style="flex-direction:column;align-items:flex-start;gap:6px">
           <div style="display:flex;align-items:center;gap:10px;width:100%">
-            <div class="li-info"><div class="li-name">${a.MusicoId}</div></div>
+            <div class="av sm">${nome[0]||'?'}</div>
+            <div class="li-info"><div class="li-name">${nome}</div></div>
             ${badge(st)}
           </div>
           ${just&&st==='recusada'?`<div style="font-size:12px;color:var(--red);padding:6px 10px;background:rgba(248,113,113,.1);border-radius:6px;width:100%">💬 "${just}"</div>`:''}
@@ -2267,6 +2269,41 @@ function closeM(){ document.getElementById('mOverlay').classList.remove('open');
 // ===== DETAIL =====
 function openD(){ document.getElementById('detail').classList.add('open'); }
 function closeD(){ document.getElementById('detail').classList.remove('open'); }
+
+// ===== SYNC =====
+async function sincronizar() {
+  const s = getSess();
+  if (!s) return;
+  toast('Sincronizando...', 'info');
+  if (s.nivel === 'master') {
+    const pg = document.querySelector('.ni.active')?.dataset?.p || 'dashboard';
+    const loaders = {inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens,dashboard:loadDash};
+    if (loaders[pg]) await loaders[pg]();
+  } else if (s.nivel === 'liderbanda') {
+    const [rB,rE,rRep,rME] = await Promise.all([api('getMinhasBandas'),api('getEscalas'),api('getRepertorios',{}),api('getMinhasEscalas')]);
+    _lBandas = rB.ok ? rB.data : [];
+    _lMusicas = [];
+    _vEscalas = rME.ok ? rME.data : [];
+    renderLBandas();
+    renderLEsc(rE.ok ? rE.data : []);
+    renderLRep(rRep.ok ? rRep.data : []);
+  } else if (s.nivel === 'musico') {
+    const rEsc = await api('getMinhasEscalas');
+    _vEscalas = rEsc.ok ? rEsc.data : [];
+    renderVEsc();
+    const rBandas = await api('getBandas');
+    const minhasBandas = (rBandas.ok ? rBandas.data : []).filter(b => {
+      return (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid);
+    });
+    if (minhasBandas.length) {
+      for (const banda of minhasBandas) {
+        const rCel = await api('getCelebracoesDaBanda',{bandaId:banda.Id});
+        // refresh banda info
+      }
+    }
+  }
+  toast('Sincronizado! ✅', 'ok');
+}
 
 // ===== UTILS =====
 function load(v){ document.getElementById('loading').classList.toggle('on',v); }
