@@ -1310,6 +1310,7 @@ async function execRemBanda(){
 // CELEBRAÇÕES
 async function loadCel(){
   load(true); const r=await api('getCelebracoes'); load(false);
+  console.log('loadCel response:', JSON.stringify(r).substring(0,200));
   const list=r.ok?r.data:[];
   const el=document.getElementById('admCelList');
   if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
