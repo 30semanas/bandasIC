@@ -6,6 +6,23 @@
 <title>Bandas IC</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script>
+  // Limpar cache do navegador automaticamente
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+      regs.forEach(function(r) { r.unregister(); });
+    });
+    navigator.serviceWorker.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'CACHE_CLEARED') console.log('Cache limpo');
+    });
+  }
+  // Forçar revalidação de todos os recursos em cache
+  if (window.caches) {
+    caches.keys().then(function(names) {
+      names.forEach(function(name) { caches.delete(name); });
+    });
+  }
+</script>
 </head>
 <body>
 
@@ -263,6 +280,31 @@
 <div id="toast" class="toast"></div>
 <div id="loading" class="loading"><div class="spin"></div></div>
 
-<script src="app.js?v=1779884497"></script>
+<script>
+  // Cache buster: verifica se app.js foi atualizado via HEAD request
+  (function() {
+    var CACHE_KEY = 'bic_app_etag';
+    function loadScript(ver) {
+      var s = document.createElement('script');
+      s.src = 'app.js?v=' + ver;
+      document.body.appendChild(s);
+    }
+    // Faz HEAD request para pegar ETag/Last-Modified do app.js
+    fetch('app.js', { method: 'HEAD', cache: 'no-store' })
+      .then(function(r) {
+        var etag = r.headers.get('etag') || r.headers.get('last-modified') || Date.now();
+        var stored = localStorage.getItem(CACHE_KEY);
+        if (stored !== String(etag)) {
+          // Arquivo mudou - salva novo etag e carrega sem cache
+          localStorage.setItem(CACHE_KEY, String(etag));
+          loadScript(Date.now());
+        } else {
+          // Arquivo igual - usa versão guardada (cache válido)
+          loadScript(stored.replace(/[^a-zA-Z0-9]/g,'').substring(0,20));
+        }
+      })
+      .catch(function() { loadScript(Date.now()); });
+  })();
+</script>
 </body>
 </html>
