@@ -1011,7 +1011,9 @@ function detInsc(id){
   const dataA=i.DataAudicao||'', hor=i.Horario||'', loc=i.Local||'';
   const notif=i.Notificado||'nao', dataN=i.DataNotificacao||'';
   const foto=i.FotoUrl||'';
-  const waMsg=encodeURIComponent('Olá, '+nome+'! Sua audição para '+instrs+' foi agendada:\n\n📅 Data: '+fd(dataA)+'\n⏰ Horário: '+hor+'\n📍 Local: '+loc+'\n\nNos vemos lá! 🎵');
+  window._waMsgCache = encodeURIComponent('Olá, '+nome+'! Sua audição para '+instrs+' foi agendada:\n\n📅 Data: '+fd(dataA)+'\n⏰ Horário: '+hor+'\n📍 Local: '+loc+'\n\nNos vemos lá! 🎵');
+  window._waNumCache = String(i.WhatsApp||'').replace(/\D/g,'');
+  window._waIdCache  = id;
   document.getElementById('dTitle').textContent=nome;
   document.getElementById('dBody').innerHTML=`
     ${foto?`<div style="text-align:center;margin-bottom:16px"><img src="${foto}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border)"/></div>`:''}
@@ -1033,7 +1035,7 @@ function detInsc(id){
       ${st==='agendada'?`
         <button class="btn-green" onclick="confAprovar('${id}','aprovado','${nome.replace(/'/g,'')}')">✅ Aprovar</button>
         <button class="btn-red" onclick="confAprovar('${id}','reprovado','${nome.replace(/'/g,'')}')">❌ Reprovar</button>
-        <button class="btn-wa" onclick="notifCand('${id}','${whats}','${waMsg}')">💬 Notificar</button>
+        <button class="btn-wa" onclick="notifCand(window._waIdCache,window._waNumCache,window._waMsgCache)">💬 Notificar</button>
       `:st==='aprovado'?'':`<a class="btn-wa" href="${wa(whats,'')}" target="_blank">💬 WhatsApp</a>`}
     </div></div>
 `;
