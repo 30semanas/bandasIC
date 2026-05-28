@@ -428,7 +428,7 @@ function renderVSubs(subs){
 }
 
 // ===== LÍDER =====
-let _lBandas=[], _lMusicas=[];
+let _lBandas=[], _lMusicas=[], _lTodosMusicos=[];
 
 async function initLider(sess){
   document.getElementById('lNome').textContent = sess.nome;
@@ -438,15 +438,38 @@ async function initLider(sess){
   const [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
     api('getMinhasBandas'),
     api('getEscalas'),
-    api('getMusicas'),
+    api('getMusicos'),   // todos os músicos para resolver nomes
     api('getMinhasEscalas'),
     api('getRepertorios',{}),
     api('getCelebracoes'),
   ]);
-  load(false);
+
   _lBandas  = rB.ok  ? rB.data  : [];
-  _lMusicas = rM.ok  ? rM.data  : [];
+  _lTodosMusicos = rM.ok ? rM.data : [];  // global com todos os músicos
+  _lMusicas = [];
   _vEscalas = rME.ok ? rME.data : [];
+
+  // Pré-carregar aceites de todas as escalas das minhas bandas - UMA VEZ só
+  const todasEscalas = rE.ok ? rE.data : [];
+  const aceiteData = {};  // bandaId -> { musicoId -> {status, justificativa} }
+  const escalasMinhasBandas = todasEscalas.filter(e =>
+    _lBandas.some(b => b.Id === e.BandaId)
+  );
+  for (const esc of escalasMinhasBandas) {
+    const rEsc = await api('getEscalaById', { id: esc.Id });
+    if (rEsc.ok) {
+      if (!aceiteData[esc.BandaId]) aceiteData[esc.BandaId] = {};
+      (rEsc.aceites||[]).forEach(a => {
+        aceiteData[esc.BandaId][a.MusicoId] = {
+          status: (a.Status||'pendente').toLowerCase(),
+          justificativa: a.Justificativa||'',
+        };
+      });
+    }
+  }
+  window._lBandaAceites = aceiteData;
+
+  load(false);
 
   // Filtrar repertórios das celebrações das minhas bandas
   const todasCels = rCels.ok ? rCels.data : [];
@@ -466,7 +489,7 @@ async function initLider(sess){
     (r.CriadoPor && r.CriadoPor === s.mid)
   );
 
-  await renderLBandas();
+  renderLBandas();
   renderLEsc(rE.ok ? rE.data : []);
   renderLMus();
   renderVEscInEl('lMinhasEscList');
@@ -602,60 +625,45 @@ function ltab(id,el){
   if (id === 'lBandas') renderLBandas();
 }
 
-async function renderLBandas(){
-  const el=document.getElementById('lBandasList');
-  if(!_lBandas.length){el.innerHTML=empty('🎸','Nenhuma banda');return;}
+function renderLBandas(){
+  const el = document.getElementById('lBandasList');
+  if (!_lBandas.length) { el.innerHTML = empty('🎸','Nenhuma banda'); return; }
+  // Usa dados já carregados em _lBandaAceites (carregado no initLider)
+  const aceiteData = window._lBandaAceites || {};
 
-  const [rMusicos, rEsc] = await Promise.all([api('getMusicos'), api('getEscalas')]);
-  const todosMusicos = rMusicos.ok ? rMusicos.data : [];
-  const todasEscalas = rEsc.ok ? rEsc.data : [];
-
-  el.innerHTML = '';
-  for (const b of _lBandas) {
+  el.innerHTML = _lBandas.map(b => {
     const membrosIds = (b.MembrosIds||'').split(',').filter(Boolean);
-    const membros = membrosIds.map(mid => todosMusicos.find(x=>x.Id===mid) || {Id:mid,Nome:mid,Instrumentos:''});
-    const escalasB = todasEscalas.filter(e => e.BandaId === b.Id);
+    const membros = membrosIds.map(mid => {
+      const mus = (_lTodosMusicos||[]).find(x => x.Id === mid);
+      return mus || { Id: mid, Nome: mid, Instrumentos: '' };
+    });
 
-    // Buscar aceites
-    const aceiteMap = {};
-    for (const esc of escalasB) {
-      const rEsc2 = await api('getEscalaById', { id: esc.Id });
-      if (rEsc2.ok) {
-        (rEsc2.aceites||[]).forEach(a => {
-          aceiteMap[a.MusicoId] = {
-            status: (a.Status||'pendente').toLowerCase(),
-            justificativa: a.Justificativa||'',
-          };
-        });
-      }
-    }
-
+    const aceiteMap = aceiteData[b.Id] || {};
+    const temEscala = Object.keys(aceiteMap).length > 0;
     const aceitaram = membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length;
     const recusaram = membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length;
     const pendentes = membros.length - aceitaram - recusaram;
 
-    const div = document.createElement('div');
-    div.className = 'card';
-    div.style.marginBottom = '16px';
-    div.innerHTML = `
+    return `
+    <div class="card" style="margin-bottom:16px">
       <div class="ch">
         <span style="font-size:26px">${b.Emoji||'🎸'}</span>
         <div style="flex:1">
           <div class="cn">${b.Nome||'—'}</div>
           <div class="cs">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
         </div>
-        ${escalasB.length ? `<div style="display:flex;gap:5px;font-size:11px">
+        ${temEscala ? `<div style="display:flex;gap:5px;font-size:11px">
           <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 7px">✅${aceitaram}</span>
           <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 7px">❌${recusaram}</span>
           <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 7px">⏳${pendentes}</span>
-        </div>` : ''}
+        </div>` : '<span style="font-size:11px;color:var(--text3)">sem escala</span>'}
       </div>
       <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
         <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
         <div style="display:flex;flex-direction:column;gap:6px">
           ${membros.map(mem => {
             const aceite = aceiteMap[mem.Id];
-            const st = escalasB.length ? (aceite?.status || 'pendente') : null;
+            const st = temEscala ? (aceite?.status || 'pendente') : null;
             const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':st?'#FBBF24':'var(--border)';
             const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':st?'⏳':'';
             return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
@@ -669,9 +677,9 @@ async function renderLBandas(){
             </div>`;
           }).join('')}
         </div>
-      </div>`;
-    el.appendChild(div);
-  }
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function detBandaLid(id){
@@ -2626,9 +2634,22 @@ async function sincronizar() {
       if ((cel.BandasIds||'').split(',').some(bid => _syncBIds.has(bid)) && cel.RepertorioId) _syncRepIds.add(cel.RepertorioId);
     });
     const _syncReps = (rRep.ok ? rRep.data : []).filter(r => _syncRepIds.has(r.Id) || (r.CriadoPor && r.CriadoPor === s.mid));
+    // Recarregar aceites
+    _lTodosMusicos = (await api('getMusicos')).data || [];
+    const _syncEscB = (rE.ok?rE.data:[]).filter(e=>_syncBIds.has(e.BandaId));
+    const _syncAceites = {};
+    for (const esc of _syncEscB) {
+      const rEsc = await api('getEscalaById',{id:esc.Id});
+      if (rEsc.ok) {
+        if (!_syncAceites[esc.BandaId]) _syncAceites[esc.BandaId]={};
+        (rEsc.aceites||[]).forEach(a=>{ _syncAceites[esc.BandaId][a.MusicoId]={status:(a.Status||'pendente').toLowerCase(),justificativa:a.Justificativa||''}; });
+      }
+    }
+    window._lBandaAceites = _syncAceites;
     renderLBandas();
     renderLEsc(rE.ok ? rE.data : []);
     renderLRep(_syncReps);
+    renderVEscInEl('lMinhasEscList');
   } else if (s.nivel === 'musico') {
     const rEsc = await api('getMinhasEscalas');
     _vEscalas = rEsc.ok ? rEsc.data : [];
