@@ -836,8 +836,18 @@ function renderLiderEquipePanel() {
   el.innerHTML = panel.map(cel => {
     const d = pd(cel.Data||'');
     const podeRep = cel.podeDefinirRepertorio;
+
+    // Build aceite map: musicoId -> status
+    const aceiteMap = {};
+    (cel.escalas||[]).forEach(esc => {
+      (esc.aceites||[]).forEach(a => {
+        aceiteMap[a.MusicoId] = { status: (a.Status||'pendente').toLowerCase(), nome: a.MusicoNome||a.MusicoId };
+      });
+    });
+
     return `
-    <div class="card" style="margin-bottom:12px">
+    <div class="card" style="margin-bottom:16px">
+      <!-- Cabeçalho Celebração -->
       <div class="ch">
         <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
         <div style="flex:1">
@@ -845,32 +855,44 @@ function renderLiderEquipePanel() {
           <div class="cs">📍 ${cel.Local||''} • ⏰ ${cel.Horario||''}</div>
           <div style="font-size:11px;margin-top:3px;color:${podeRep?'var(--accent2)':'var(--text3)'}">
             📋 ${podeRep?'Você define o repertório':'Master define o repertório'}
-            ${cel.repertorioNome ? `• <strong>${cel.repertorioNome}</strong>` : ''}
+            ${cel.repertorioNome?`• <strong>${cel.repertorioNome}</strong>`:''}
           </div>
         </div>
         ${podeRep ? `<button class="btn-ghost sm" onclick="modalEditarCel('${cel.Id}')">✏️ Repertório</button>` : ''}
       </div>
 
-      ${cel.bandas.length ? `
-      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-        <p style="font-size:11px;color:var(--text3);margin-bottom:8px">BANDAS</p>
+      <!-- Bandas e Músicos -->
+      ${cel.bandas && cel.bandas.length ? `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         ${cel.bandas.map(b => `
-          <div style="margin-bottom:8px">
-            <div style="font-size:13px;font-weight:600;margin-bottom:6px">${b.Emoji||'🎸'} ${b.Nome||'—'}</div>
-            ${cel.escalas.filter(e=>e.BandaId===b.Id).map(esc => `
-              <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:4px">
-                <p style="font-size:12px;color:var(--text2);margin-bottom:6px">👥 Aceites da escala:</p>
-                ${esc.aceites.length ? esc.aceites.map(a => {
-                  const st = (a.Status||'pendente').toLowerCase();
-                  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                    <div class="av" style="width:24px;height:24px;font-size:11px">${(a.MusicoNome||'?')[0]}</div>
-                    <span style="flex:1;font-size:13px">${a.MusicoNome||a.MusicoId}</span>
-                    ${badge(st)}
-                  </div>`;
-                }).join('') : '<p style="font-size:12px;color:var(--text3)">Nenhum músico escalado ainda</p>'}
-              </div>`).join('')}
+          <div style="margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font-size:18px">${b.Emoji||'🎸'}</span>
+              <span style="font-size:14px;font-weight:700">${b.Nome||'—'}</span>
+              <span style="font-size:11px;color:var(--text3)">• ${(b.membros||[]).length} integrante(s)</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;padding-left:8px">
+              ${(b.membros||[]).map(mem => {
+                const aceite = aceiteMap[mem.Id] || { status: 'pendente', nome: mem.Nome };
+                const st = aceite.status;
+                const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':'var(--yellow)';
+                const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':'⏳';
+                return `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
+                  <div class="av" style="width:28px;height:28px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
+                    <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||''}</div>
+                  </div>
+                  <span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>
+                </div>`;
+              }).join('')}
+            </div>
           </div>`).join('')}
-      </div>` : ''}
+      </div>` : `
+      <div style="margin-top:10px;padding:10px;background:var(--bg3);border-radius:8px">
+        <p style="font-size:12px;color:var(--text3);text-align:center">Nenhuma banda vinculada ainda</p>
+      </div>`}
     </div>`;
   }).join('');
 }
@@ -1700,7 +1722,7 @@ async function loadCel(){
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
           ${isMaster ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>` : ''}
-          ${podeRepLE ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">📋 Repertório</button>` : ''}
+          ${isLE ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">👁 Ver${podeRepLE?' / Repertório':''}</button>` : ''}
           ${isMaster ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirCel('${c.Id}','${(c.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
         </div>
       </div>
