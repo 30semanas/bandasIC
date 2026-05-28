@@ -817,8 +817,14 @@ async function initLiderEquipe(sess) {
   await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
   load(false);
 
-  // Navegar para celebrações (onde o painel é exibido)
+  // Navegar para celebrações e mostrar painel LE dedicado
   apg('celebracoes');
+  const leEl = document.getElementById('lePanelList');
+  const celEl = document.getElementById('admCelList');
+  if (leEl) leEl.style.display = 'block';
+  if (celEl) celEl.style.display = 'none';
+  const btnNovaCel2 = document.querySelector('[onclick="modalCriarCel()"]');
+  if (btnNovaCel2) btnNovaCel2.style.display = 'none';
 }
 
 async function loadLiderEquipePanel() {
@@ -829,7 +835,7 @@ async function loadLiderEquipePanel() {
 }
 
 function renderLiderEquipePanel() {
-  const el = document.getElementById('admCelList') || document.getElementById('admEscList');
+  const el = document.getElementById('lePanelList') || document.getElementById('admCelList');
   if (!el) return;
   const panel = window._lePanel || [];
   if (!panel.length) {
@@ -1316,6 +1322,7 @@ async function loadBandas(){
 async function modalEditarBanda(id) {
   const b = _aBandas.find(x => x.Id === id);
   if (!b) return;
+  window._bandaEditandoId = id;
   load(true);
   const [rL, rM, rCel] = await Promise.all([api('getLideres'), api('getMusicos'), api('getCelebracoes')]);
   load(false);
@@ -1486,10 +1493,20 @@ function buscarCelParaBanda(query) {
   div.innerHTML = cels.map(cel => {
     const d = pd(cel.Data||'');
     const temRep = cel.RepertorioId && cel.RepertorioId.trim() !== '';
+    const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
+    const bandaAtualId = window._bandaEditandoId || '';
+    const outrasBandas = bandasDaCel.filter(bid => bid !== bandaAtualId);
+    const jaVinculada = outrasBandas.length > 0;
+    const todasBandas = window._aBandas || [];
+    const nomeBandaVinc = jaVinculada ? (todasBandas.find(x=>x.Id===outrasBandas[0])?.Nome||'outra banda') : '';
+    const bloqueada = !temRep || jaVinculada;
     return `<div onclick="adicionarCelBanda('${cel.Id}')"
-      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);opacity:${temRep?1:0.5}"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);opacity:${bloqueada?0.5:1}"
       onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
-      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'} ${!temRep?'<span style="font-size:10px;color:var(--red)">⚠️ sem repertório</span>':''}</div>
+      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}
+        ${!temRep?'<span style="font-size:10px;color:var(--red)"> ⚠️ sem repertório</span>':''}
+        ${jaVinculada?`<span style="font-size:10px;color:var(--red)"> ⛔ vinculada à ${nomeBandaVinc}</span>`:''}
+      </div>
       <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
     </div>`;
   }).join('');
@@ -1501,7 +1518,7 @@ function adicionarCelBanda(celId) {
   const input = document.getElementById('bandaCelBusca');
   if (input) input.value = '';
 
-  // Verificar se já está vinculada
+  // Verificar se já está vinculada a ESTA banda
   if (document.querySelector(`#bandaCelsSelecionadas [data-cel-id="${celId}"]`)) return;
 
   const cel = (window._todasCels || []).find(c => c.Id === celId);
@@ -1510,6 +1527,20 @@ function adicionarCelBanda(celId) {
   // Bloquear se não tem repertório
   if (!cel.RepertorioId || cel.RepertorioId.trim() === '') {
     toast('⚠️ Esta celebração não tem repertório definido. Atribua um repertório antes de vincular a banda.', 'err');
+    return;
+  }
+
+  // Bloquear se celebração já tem OUTRA banda vinculada
+  const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
+  const bandaAtualId = window._bandaEditandoId || '';
+  const outrasBAndas = bandasDaCel.filter(bid => bid !== bandaAtualId);
+  if (outrasBAndas.length > 0) {
+    const todasBandas = window._aBandas || [];
+    const nomesBandas = outrasBAndas.map(bid => {
+      const b = todasBandas.find(x => x.Id === bid);
+      return b ? b.Nome : bid;
+    }).join(', ');
+    toast(`⛔ Esta celebração já está vinculada à(s) banda(s): ${nomesBandas}`, 'err');
     return;
   }
 
@@ -1703,13 +1734,18 @@ async function execRemBanda(){
 
 // CELEBRAÇÕES
 async function loadCel(){
+  const s=getSess();
+  // Lider de equipe usa painel próprio, não loadCel
+  if (s && s.nivel==='liderequipe') {
+    await loadLiderEquipePanel();
+    return;
+  }
   load(true); const r=await api('getCelebracoes'); load(false);
   const list=r.ok?r.data:[];
   const el=document.getElementById('admCelList');
   if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
-  const s=getSess();
   const isMaster = s && s.nivel==='master';
-  const isLE = s && s.nivel==='liderequipe';
+  const isLE = false;
   list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
   el.innerHTML=list.map(c=>{
     const d=pd(c.Data);
@@ -1893,7 +1929,7 @@ async function salvarEdicaoCel(id) {
   load(true);
   const r = await api('editarCelebracao', {
     id, nome, data: dt, horario: hr, local: loc,
-    obs: document.getElementById('ecObs').value,
+    obs: document.getElementById('ecObs')?.value || '',
     repertorioId: repId,
     repertorioTipo: document.getElementById('ecRepT').value,
     liderEquipeId: liderEqId,
