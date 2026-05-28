@@ -526,7 +526,14 @@ async function salvarRepLider(repId, liberar) {
   if (!r.ok) { toast(r.error||'Erro','err'); return; }
 
   if (liberar) {
-    toast('Repertório liberado! Músicos já podem ver a escala ✅','ok');
+    // Criar escalas para todas as bandas que têm este repertório via celebrações
+    const rBandas = await api('getMinhasBandas');
+    if (rBandas.ok) {
+      for (const banda of rBandas.data) {
+        await api('criarEscalasDaBanda', { bandaId: banda.Id });
+      }
+    }
+    toast('Repertório liberado! Escalas enviadas aos músicos ✅','ok');
   } else {
     toast('Rascunho salvo!','ok');
   }
