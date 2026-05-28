@@ -674,9 +674,8 @@ function renderLRep(list){
   el.innerHTML=list.map(r=>{
     const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
     const pronto = r.RepReady === 'sim';
-    const criadoPor = r.CriadoPor || '';
-    const eMeu = isMaster
-      || (criadoPor !== '' && myId !== '' && criadoPor === myId);
+    const criadoPor = (r.CriadoPor||'').trim();
+    const eMeu = isMaster || criadoPor === '' || (criadoPor !== '' && criadoPor === (myId||''));
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
@@ -2010,12 +2009,10 @@ async function loadRepertoriosAdmin(){
       return m2 ? m2.Nome : null;
     }).filter(Boolean);
 
-    // Master pode tudo; CriadoPor vazio = criado pelo admin (master);
-    // Outros só editam/excluem se CriadoPor === myId
-    const criadoPor = r.CriadoPor || '';
-    const eMeu = isMaster
-      || (criadoPor === '' && isMaster)  // legado criado pelo admin
-      || (criadoPor !== '' && myId !== '' && criadoPor === myId);
+    const criadoPor = (r.CriadoPor||'').trim();
+    // CriadoPor vazio = criado antes da coluna existir, todos podem editar
+    // CriadoPor preenchido = só o dono ou master
+    const eMeu = isMaster || criadoPor === '' || (criadoPor !== '' && criadoPor === (myId||''));
     const pronto = r.RepReady === 'sim';
 
     return `
