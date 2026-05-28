@@ -803,7 +803,7 @@ async function initLiderEquipe(sess) {
   show('sAdm');
 
   // Esconder menus que lider de equipe não acessa
-  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca','escalas','repertorios'];
+  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca','escalas'];
   hidePages.forEach(p => {
     const el = document.querySelector('.ni[data-p="'+p+'"]');
     if (el) el.style.display = 'none';
@@ -812,10 +812,13 @@ async function initLiderEquipe(sess) {
   const btnNovaCel = document.querySelector('[onclick="modalCriarCel()"]');
   if (btnNovaCel) btnNovaCel.style.display = 'none';
 
-  // Mostrar só escalas e celebrações
+  // Carregar dados
   load(true);
-  await Promise.all([loadLiderEquipePanel(), loadCel()]);
+  await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
   load(false);
+
+  // Navegar para celebrações (onde o painel é exibido)
+  apg('celebracoes');
 }
 
 async function loadLiderEquipePanel() {
@@ -826,7 +829,7 @@ async function loadLiderEquipePanel() {
 }
 
 function renderLiderEquipePanel() {
-  const el = document.getElementById('admEscList');
+  const el = document.getElementById('admCelList') || document.getElementById('admEscList');
   if (!el) return;
   const panel = window._lePanel || [];
   if (!panel.length) {
@@ -2407,8 +2410,7 @@ async function sincronizar() {
     const loaders = {inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens,dashboard:loadDash};
     if (loaders[pg]) await loaders[pg]();
   } else if (s.nivel === 'liderequipe') {
-    await loadLiderEquipePanel();
-    await loadCel();
+    await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
     toast('Sincronizado! ✅', 'ok');
     return;
   } else if (s.nivel === 'liderbanda') {
