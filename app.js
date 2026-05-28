@@ -674,12 +674,13 @@ function renderLRep(list){
   el.innerHTML=list.map(r=>{
     const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
     const pronto = r.RepReady === 'sim';
-    // Master pode tudo; outros só editam/excluem os próprios
-    const eMeu = isMaster || (r.CriadoPor && r.CriadoPor !== '' && String(r.CriadoPor) === String(myId||''));
+    const criadoPor = r.CriadoPor || '';
+    const eMeu = isMaster
+      || (criadoPor !== '' && myId !== '' && criadoPor === myId);
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
-        <div class="li-sub">${musCount} música(s)${!eMeu?' • <span style="color:var(--text3);font-size:10px">criado por outro</span>':''}</div>
+        <div class="li-sub">${musCount} música(s)${!eMeu?` • <span style="color:var(--text3);font-size:10px">por ${r.CriadoPorNome||'outro usuário'}</span>`:''}</div>
       </div>
       <div style="display:flex;gap:6px">
         <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>
@@ -2009,9 +2010,12 @@ async function loadRepertoriosAdmin(){
       return m2 ? m2.Nome : null;
     }).filter(Boolean);
 
-    // Master pode tudo; outros só editam/excluem os próprios (CriadoPor = myId)
-    // CriadoPor vazio = legado, só master edita
-    const eMeu = isMaster || (r.CriadoPor && r.CriadoPor !== '' && String(r.CriadoPor) === String(myId||''));
+    // Master pode tudo; CriadoPor vazio = criado pelo admin (master);
+    // Outros só editam/excluem se CriadoPor === myId
+    const criadoPor = r.CriadoPor || '';
+    const eMeu = isMaster
+      || (criadoPor === '' && isMaster)  // legado criado pelo admin
+      || (criadoPor !== '' && myId !== '' && criadoPor === myId);
     const pronto = r.RepReady === 'sim';
 
     return `
@@ -2019,7 +2023,7 @@ async function loadRepertoriosAdmin(){
       <div class="ch">
         <div style="flex:1">
           <div class="cn">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px;font-size:10px">✅ pronto</span>':''}</div>
-          <div class="cs" style="margin-top:2px">${musIds.length} música(s)${!eMeu?' <span style="font-size:10px;color:var(--text3)">• criado por outro</span>':''}</div>
+          <div class="cs" style="margin-top:2px">${musIds.length} música(s)${!eMeu?` <span style="font-size:10px;color:var(--text3)">• por ${r.CriadoPorNome||'outro usuário'}</span>`:''}</div>
         </div>
         <div style="display:flex;gap:6px">
           ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>` : ''}
