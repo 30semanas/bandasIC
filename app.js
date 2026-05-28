@@ -104,7 +104,7 @@ function prevFoto(inp){
 async function enviarInscricao(){
   const nome = document.getElementById('iNome').value.trim();
   const ekl  = document.getElementById('iEkl').value.trim();
-  const wa   = document.getElementById('iWa').value.trim();
+  const wa   = phoneToRaw(document.getElementById('iWa').value);
   const inst = [...document.querySelectorAll('#sInsc .chip input:checked')].map(i=>i.value);
   const obs  = document.getElementById('iObs').value.trim();
   if (!nome){ toast('Informe seu nome','err'); return; }
@@ -803,11 +803,14 @@ async function initLiderEquipe(sess) {
   show('sAdm');
 
   // Esconder menus que lider de equipe não acessa
-  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca'];
+  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca','escalas','repertorios'];
   hidePages.forEach(p => {
     const el = document.querySelector('.ni[data-p="'+p+'"]');
     if (el) el.style.display = 'none';
   });
+  // Esconder botão "+ Nova celebração"
+  const btnNovaCel = document.querySelector('[onclick="modalCriarCel()"]');
+  if (btnNovaCel) btnNovaCel.style.display = 'none';
 
   // Mostrar só escalas e celebrações
   load(true);
@@ -1072,7 +1075,7 @@ async function loadMusicos(){
     <div class="card click" onclick="detMusico('${m.Id}')">
       <div class="ch">
         <div class="av">${(m.Nome||'?')[0]}</div>
-        <div style="flex:1"><div class="cn">${m.Nome||'—'} <span class="rtag" style="background:rgba(0,0,0,.3);color:${nivColor}">${nivLabel}</span></div><div class="cs">${m.Eklesia||'—'} • 📱 ${m.WhatsApp||'—'}</div></div>
+        <div style="flex:1"><div class="cn">${m.Nome||'—'} <span class="rtag" style="background:rgba(0,0,0,.3);color:${nivColor}">${nivLabel}</span></div><div class="cs">${m.Eklesia||'—'} • 📱 ${phoneToDisplay(m.WhatsApp||'')||'—'}</div></div>
         <span class="badge b-aprov">ativo</span>
       </div>
       <div class="itags">${(m.Instrumentos||'').split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
@@ -1126,7 +1129,7 @@ async function detMusico(id){
       <div style="display:flex;flex-direction:column;gap:10px">
         <div class="fg"><label>Nome</label><input type="text" id="edNome" value="${nome==='—'?'':nome}"/></div>
         <div class="fg"><label>Eklesia</label><input type="text" id="edEkl" value="${ekl}"/></div>
-        <div class="fg"><label>WhatsApp</label><input type="text" id="edWa" value="${whats}"/></div>
+        <div class="fg"><label>WhatsApp</label><input type="text" id="edWa" value="${phoneToDisplay(whats)}" oninput="applyPhoneMask(this)" placeholder="(99) 99999-9999" maxlength="15"/></div>
         <div class="fg"><label>Instrumentos</label><input type="text" id="edInstr" value="${instr}" placeholder="Voz, Guitarra..."/></div>
         <div class="fg">
           <label>Banda(s)</label>
@@ -1171,7 +1174,7 @@ async function salvarEdMusico(id) {
   const nivel   = document.getElementById('edNivel').value;
   const nome    = document.getElementById('edNome').value.trim();
   const ekl     = document.getElementById('edEkl').value.trim();
-  const whats   = document.getElementById('edWa').value.trim();
+  const whats   = phoneToRaw(document.getElementById('edWa').value);
   const instr   = document.getElementById('edInstr').value.trim();
   const isLider = (nivel === 'liderbanda' || nivel === 'liderequipe' || nivel === 'master') ? 'sim' : 'nao';
 
@@ -1679,9 +1682,13 @@ async function loadCel(){
   const list=r.ok?r.data:[];
   const el=document.getElementById('admCelList');
   if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
+  const s=getSess();
+  const isMaster = s && s.nivel==='master';
+  const isLE = s && s.nivel==='liderequipe';
   list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
   el.innerHTML=list.map(c=>{
     const d=pd(c.Data);
+    const podeRepLE = isLE && (c.RepertorioTipo||'').toLowerCase()==='liderequipe';
     return `
     <div class="card">
       <div class="ch">
@@ -1692,8 +1699,9 @@ async function loadCel(){
           ${c.LiderEquipeId ? `<div style="font-size:11px;color:var(--accent2);margin-top:3px">👥 Líder de equipe atribuído</div>` : ''}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>
-          <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirCel('${c.Id}','${(c.Nome||'').replace(/'/g,'')}')">🗑</button>
+          ${isMaster ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>` : ''}
+          ${podeRepLE ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">📋 Repertório</button>` : ''}
+          ${isMaster ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirCel('${c.Id}','${(c.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
         </div>
       </div>
       <div style="font-size:12px;color:var(--text2);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
@@ -2384,6 +2392,30 @@ async function sincronizar() {
     }
   }
   toast('Sincronizado! ✅', 'ok');
+}
+
+
+// ===== MÁSCARA TELEFONE =====
+function maskPhone(value) {
+  // Remove tudo que não é dígito
+  const d = String(value).replace(/\D/g, '').substring(0, 11);
+  if (d.length <= 2)  return d.length ? '(' + d : '';
+  if (d.length <= 7)  return '(' + d.substring(0,2) + ') ' + d.substring(2);
+  if (d.length <= 10) return '(' + d.substring(0,2) + ') ' + d.substring(2,6) + '-' + d.substring(6);
+  return '(' + d.substring(0,2) + ') ' + d.substring(2,7) + '-' + d.substring(7,11);
+}
+
+function applyPhoneMask(el) {
+  el.value = maskPhone(el.value);
+}
+
+function phoneToRaw(value) {
+  return String(value).replace(/\D/g, '');
+}
+
+function phoneToDisplay(value) {
+  // Recebe número puro (12997047380) ou já formatado
+  return maskPhone(String(value).replace(/\D/g, ''));
 }
 
 // ===== UTILS =====
