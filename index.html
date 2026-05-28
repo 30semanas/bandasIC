@@ -79,7 +79,7 @@
           <div class="fg"><label>Nome completo *</label><input type="text" id="iNome" placeholder="Seu nome"/></div>
           <div class="fg"><label>Eklesia / Igreja *</label><input type="text" id="iEkl" placeholder="Nome da sua igreja"/></div>
         </div>
-        <div class="fg"><label>WhatsApp *</label><input type="text" id="iWa" placeholder="(11) 99999-9999"/></div>
+        <div class="fg"><label>WhatsApp *</label><input type="text" id="iWa" placeholder="(99) 99999-9999" oninput="applyPhoneMask(this)" maxlength="15"/></div>
         <div class="fg"><label>Foto (opcional)</label>
           <div class="upload-zone" onclick="document.getElementById('iFoto').click()">
             <div id="fotoPrev"><span style="font-size:32px">📷</span><p>Clique para enviar</p></div>
