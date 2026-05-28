@@ -795,8 +795,7 @@ let _aInsc=[], _aInscFilter='todos', _aBandas=[], _aMusicos=[], _aMusicas=[];
 let _pendAct=null, _sideOpen=false;
 
 // ===== LÍDER DE EQUIPE =====
-async function initLiderEquipe(sess) {
-  // Líder de equipe usa o painel do admin mas com acesso restrito
+async async function initLiderEquipe(sess) {
   document.getElementById('admNome').textContent = sess.nome;
   document.getElementById('admAv').textContent = sess.nome[0]||'L';
   document.getElementById('admTopAv').textContent = sess.nome[0]||'L';
@@ -804,23 +803,74 @@ async function initLiderEquipe(sess) {
   show('sAdm');
 
   // Esconder menus que lider de equipe não acessa
-  const hidePages = ['inscricoes','musicos','tokens'];
+  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca'];
   hidePages.forEach(p => {
     const el = document.querySelector('.ni[data-p="'+p+'"]');
     if (el) el.style.display = 'none';
   });
 
-  // Carregar celebrações atribuídas a ele
-  await loadCel();
-  await loadBandas();
-  await loadEsc();
-
-  // Mostrar tela de escalas pessoais também
-  _vEscalas = [];
-  const rME = await api('getMinhasEscalas');
-  if (rME.ok) _vEscalas = rME.data;
+  // Mostrar só escalas e celebrações
+  load(true);
+  await Promise.all([loadLiderEquipePanel(), loadCel()]);
+  load(false);
 }
 
+async function loadLiderEquipePanel() {
+  const r = await api('getLiderEquipePanel');
+  if (!r.ok) return;
+  window._lePanel = r.data || [];
+  renderLiderEquipePanel();
+}
+
+function renderLiderEquipePanel() {
+  const el = document.getElementById('admEscList');
+  if (!el) return;
+  const panel = window._lePanel || [];
+  if (!panel.length) {
+    el.innerHTML = empty('✨','Nenhuma celebração atribuída a você');
+    return;
+  }
+  el.innerHTML = panel.map(cel => {
+    const d = pd(cel.Data||'');
+    const podeRep = cel.podeDefinirRepertorio;
+    return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="ch">
+        <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
+        <div style="flex:1">
+          <div class="cn">${cel.Nome||'—'}</div>
+          <div class="cs">📍 ${cel.Local||''} • ⏰ ${cel.Horario||''}</div>
+          <div style="font-size:11px;margin-top:3px;color:${podeRep?'var(--accent2)':'var(--text3)'}">
+            📋 ${podeRep?'Você define o repertório':'Master define o repertório'}
+            ${cel.repertorioNome ? `• <strong>${cel.repertorioNome}</strong>` : ''}
+          </div>
+        </div>
+        ${podeRep ? `<button class="btn-ghost sm" onclick="modalEditarCel('${cel.Id}')">✏️ Repertório</button>` : ''}
+      </div>
+
+      ${cel.bandas.length ? `
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:8px">BANDAS</p>
+        ${cel.bandas.map(b => `
+          <div style="margin-bottom:8px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:6px">${b.Emoji||'🎸'} ${b.Nome||'—'}</div>
+            ${cel.escalas.filter(e=>e.BandaId===b.Id).map(esc => `
+              <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:4px">
+                <p style="font-size:12px;color:var(--text2);margin-bottom:6px">👥 Aceites da escala:</p>
+                ${esc.aceites.length ? esc.aceites.map(a => {
+                  const st = (a.Status||'pendente').toLowerCase();
+                  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <div class="av" style="width:24px;height:24px;font-size:11px">${(a.MusicoNome||'?')[0]}</div>
+                    <span style="flex:1;font-size:13px">${a.MusicoNome||a.MusicoId}</span>
+                    ${badge(st)}
+                  </div>`;
+                }).join('') : '<p style="font-size:12px;color:var(--text3)">Nenhum músico escalado ainda</p>'}
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
 
 async function initAdmin(sess){
   document.getElementById('admNome').textContent=sess.nome;
@@ -2305,6 +2355,11 @@ async function sincronizar() {
     const pg = document.querySelector('.ni.active')?.dataset?.p || 'dashboard';
     const loaders = {inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens,dashboard:loadDash};
     if (loaders[pg]) await loaders[pg]();
+  } else if (s.nivel === 'liderequipe') {
+    await loadLiderEquipePanel();
+    await loadCel();
+    toast('Sincronizado! ✅', 'ok');
+    return;
   } else if (s.nivel === 'liderbanda') {
     const [rB,rE,rRep,rME] = await Promise.all([api('getMinhasBandas'),api('getEscalas'),api('getRepertorios',{}),api('getMinhasEscalas')]);
     _lBandas = rB.ok ? rB.data : [];
