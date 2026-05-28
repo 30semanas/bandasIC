@@ -294,21 +294,30 @@ async function detEscVol(id){
     ${musicas.length ? `
     <div class="dsec">
       <h3>📋 Repertório</h3>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        ${musicas.map((m,i) => `
-          <div class="li" style="cursor:default">
-            <div style="width:24px;height:24px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
-            <div class="li-info">
-              <div class="li-name">${m.Titulo||'—'}</div>
-              <div class="li-sub">
-                ${m.Composicao||''}
-                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].tom)?`• <strong style="color:var(--accent2)">Tom: ${e.overrides[m.Id].tom}</strong>`:''}
-                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].bpm)?`• ${e.overrides[m.Id].bpm} BPM`:''}
-                ${(e.overrides&&e.overrides[m.Id]&&e.overrides[m.Id].versao)?`• ${e.overrides[m.Id].versao}`:m.Versao?`• ${m.Versao}`:''}
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${musicas.map((m,i) => {
+          const ov = (e.overrides && e.overrides[m.Id]) ? e.overrides[m.Id] : {};
+          const tom    = ov.tom    || '';
+          const bpm    = ov.bpm    || '';
+          const versao = ov.versao || m.Versao || '';
+          return `
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:${tom||bpm||versao?'10':'0'}px">
+              <span style="width:24px;height:24px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">${i+1}</span>
+              <div style="flex:1">
+                <div style="font-weight:600;font-size:14px">${m.Titulo||'—'}</div>
+                <div style="font-size:11px;color:var(--text3)">${m.Composicao||''}</div>
               </div>
+              ${m.Link ? `<a href="${m.Link}" target="_blank" style="background:var(--accent);color:#fff;border-radius:8px;padding:5px 12px;text-decoration:none;font-size:13px">▶</a>` : ''}
             </div>
-            ${m.Link ? `<a href="${m.Link}" target="_blank" class="btn-primary sm" style="text-decoration:none;padding:5px 10px">▶</a>` : ''}
-          </div>`).join('')}
+            ${tom||bpm||versao ? `
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${tom    ? `<span style="background:rgba(124,111,247,.2);color:var(--accent2);border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600">🎵 Tom: ${tom}</span>` : ''}
+              ${bpm    ? `<span style="background:rgba(52,211,153,.15);color:var(--green);border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600">⏱ ${bpm} BPM</span>` : ''}
+              ${versao ? `<span style="background:rgba(251,191,36,.15);color:#FBBF24;border-radius:6px;padding:4px 10px;font-size:12px">🎤 ${versao}</span>` : ''}
+            </div>` : ''}
+          </div>`;
+        }).join('')}
       </div>
     </div>` : ''}
 
