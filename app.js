@@ -141,7 +141,7 @@ async function enviarInscricao(){
 // ===== VOLUNTÁRIO =====
 let _vEscalas=[], _vSubFilter='todas', _vEscFilter='todas';
 
-async async function initVol(sess){
+async function initVol(sess){
   document.getElementById('vNome').textContent = sess.nome;
   document.getElementById('vGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'! 👋';
   document.getElementById('vEkl').textContent = sess.eklesia;
@@ -411,7 +411,7 @@ function renderVSubs(subs){
 // ===== LÍDER =====
 let _lBandas=[], _lMusicas=[];
 
-async async function initLider(sess){
+async function initLider(sess){
   document.getElementById('lNome').textContent = sess.nome;
   document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
@@ -795,7 +795,7 @@ let _aInsc=[], _aInscFilter='todos', _aBandas=[], _aMusicos=[], _aMusicas=[];
 let _pendAct=null, _sideOpen=false;
 
 // ===== LÍDER DE EQUIPE =====
-async async function initLiderEquipe(sess) {
+async function initLiderEquipe(sess) {
   document.getElementById('admNome').textContent = sess.nome;
   document.getElementById('admAv').textContent = sess.nome[0]||'L';
   document.getElementById('admTopAv').textContent = sess.nome[0]||'L';
@@ -872,7 +872,7 @@ function renderLiderEquipePanel() {
   }).join('');
 }
 
-async async function initAdmin(sess){
+async function initAdmin(sess){
   document.getElementById('admNome').textContent=sess.nome;
   document.getElementById('admAv').textContent=sess.nome[0]||'A';
   document.getElementById('admTopAv').textContent=sess.nome[0]||'A';
