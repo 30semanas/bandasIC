@@ -668,15 +668,23 @@ function detMus(id){
 function renderLRep(list){
   const el=document.getElementById('lRepList');
   if(!list.length){el.innerHTML=empty('📋','Nenhum repertório');return;}
+  const s=getSess();
+  const isMaster = s && s.nivel==='master';
+  const myId = s ? s.mid : '';
   el.innerHTML=list.map(r=>{
     const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
     const pronto = r.RepReady === 'sim';
+    const eMeu = isMaster || String(r.CriadoPor||'') === String(myId||'');
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
-        <div class="li-sub">${musCount} música(s)</div>
+        <div class="li-sub">${musCount} música(s)${!eMeu?' • <span style="color:var(--text3);font-size:10px">criado por outro</span>':''}</div>
       </div>
-      <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">✏️ Configurar</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>
+        ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>` : ''}
+        ${eMeu ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -928,6 +936,17 @@ function apg(name){
   if(ni) ni.classList.add('active');
   document.getElementById('admTopTit').textContent=apgTitles[name]||name;
   if(_sideOpen) toggleSide();
+  // Para lider de equipe: garantir visibilidade correta do painel
+  const s=getSess();
+  const isLE = s && s.nivel==='liderequipe';
+  if(isLE && name==='celebracoes'){
+    const leEl=document.getElementById('lePanelList');
+    const celEl=document.getElementById('admCelList');
+    if(leEl) leEl.style.display='block';
+    if(celEl) celEl.style.display='none';
+    const btnNova=document.querySelector('[onclick="modalCriarCel()"]');
+    if(btnNova) btnNova.style.display='none';
+  }
   const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens};
   if(loaders[name]) loaders[name]();
 }
@@ -1971,6 +1990,10 @@ async function loadRepertoriosAdmin(){
     return;
   }
 
+  const s = getSess();
+  const isMaster = s && s.nivel === 'master';
+  const myId = s ? s.mid : '';
+
   reps.sort((a,b) => (a.Nome||'').localeCompare(b.Nome||''));
   repEl.innerHTML = reps.map(r => {
     const musIds  = (r.MusicasIds||'').split(',').filter(Boolean);
@@ -1981,16 +2004,20 @@ async function loadRepertoriosAdmin(){
       return m2 ? m2.Nome : null;
     }).filter(Boolean);
 
+    // Só pode editar/excluir se for master OU se criou o repertório
+    const eMeu = isMaster || String(r.CriadoPor||'') === String(myId||'');
+    const pronto = r.RepReady === 'sim';
+
     return `
     <div class="card" style="margin-bottom:10px">
       <div class="ch">
         <div style="flex:1">
-          <div class="cn">📋 ${r.Nome||'—'}</div>
-          <div class="cs" style="margin-top:2px">${musIds.length} música(s)</div>
+          <div class="cn">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px;font-size:10px">✅ pronto</span>':''}</div>
+          <div class="cs" style="margin-top:2px">${musIds.length} música(s)${!eMeu?' <span style="font-size:10px;color:var(--text3)">• criado por outro</span>':''}</div>
         </div>
         <div style="display:flex;gap:6px">
-          <button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>
-          <button class="btn-red" style="padding:5px 12px;font-size:13px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>
+          ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>` : ''}
+          ${eMeu ? `<button class="btn-red" style="padding:5px 12px;font-size:13px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
         </div>
       </div>
       ${musNomes.length ? `<div class="itags">${musNomes.map(n=>`<span class="itag">🎵 ${n}</span>`).join('')}</div>` : ''}
