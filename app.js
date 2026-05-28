@@ -674,7 +674,8 @@ function renderLRep(list){
   el.innerHTML=list.map(r=>{
     const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
     const pronto = r.RepReady === 'sim';
-    const eMeu = isMaster || String(r.CriadoPor||'') === String(myId||'');
+    // CriadoPor vazio = repertório legado, qualquer um pode editar; master sempre pode
+    const eMeu = isMaster || !r.CriadoPor || r.CriadoPor === '' || String(r.CriadoPor) === String(myId||'');
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
@@ -811,7 +812,7 @@ async function initLiderEquipe(sess) {
   show('sAdm');
 
   // Esconder menus que lider de equipe não acessa
-  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca','escalas'];
+  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca'];
   hidePages.forEach(p => {
     const el = document.querySelector('.ni[data-p="'+p+'"]');
     if (el) el.style.display = 'none';
@@ -822,6 +823,8 @@ async function initLiderEquipe(sess) {
 
   // Carregar dados
   load(true);
+  const rME = await api('getMinhasEscalas');
+  _vEscalas = rME.ok ? rME.data : [];
   await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
   load(false);
 
@@ -1961,6 +1964,12 @@ async function salvarEdicaoCel(id) {
 }
 
 async function loadEsc(){
+  const s=getSess();
+  // Lider de equipe vê suas escalas pessoais nesta tela
+  if(s && s.nivel==='liderequipe'){
+    renderVEscInEl('admEscList');
+    return;
+  }
   load(true); const r=await api('getEscalas'); load(false);
   const list=r.ok?r.data:[];
   const el=document.getElementById('admEscList');
@@ -2005,7 +2014,8 @@ async function loadRepertoriosAdmin(){
     }).filter(Boolean);
 
     // Só pode editar/excluir se for master OU se criou o repertório
-    const eMeu = isMaster || String(r.CriadoPor||'') === String(myId||'');
+    // CriadoPor vazio = repertório legado, qualquer um pode editar; master sempre pode
+    const eMeu = isMaster || !r.CriadoPor || r.CriadoPor === '' || String(r.CriadoPor) === String(myId||'');
     const pronto = r.RepReady === 'sim';
 
     return `
@@ -2473,7 +2483,12 @@ async function sincronizar() {
     const loaders = {inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens,dashboard:loadDash};
     if (loaders[pg]) await loaders[pg]();
   } else if (s.nivel === 'liderequipe') {
+    const rME2 = await api('getMinhasEscalas');
+    _vEscalas = rME2.ok ? rME2.data : [];
     await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
+    // Re-render escalas if visible
+    const escPage = document.getElementById('ap-escalas');
+    if (escPage && escPage.classList.contains('active')) renderVEscInEl('admEscList');
     toast('Sincronizado! ✅', 'ok');
     return;
   } else if (s.nivel === 'liderbanda') {
