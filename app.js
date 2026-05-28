@@ -466,7 +466,7 @@ async function initLider(sess){
     (r.CriadoPor && r.CriadoPor === s.mid)
   );
 
-  renderLBandas();
+  await renderLBandas();
   renderLEsc(rE.ok ? rE.data : []);
   renderLMus();
   renderVEscInEl('lMinhasEscList');
@@ -598,17 +598,80 @@ function ltab(id,el){
   document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
   document.getElementById(id).classList.add('active');
-  // Renderizar escalas pessoais quando tab for selecionada
   if (id === 'lMinhasEsc') renderVEscInEl('lMinhasEscList');
+  if (id === 'lBandas') renderLBandas();
 }
 
-function renderLBandas(){
+async function renderLBandas(){
   const el=document.getElementById('lBandasList');
   if(!_lBandas.length){el.innerHTML=empty('🎸','Nenhuma banda');return;}
-  el.innerHTML=_lBandas.map(b=>`<div class="card click" onclick="detBandaLid('${b.Id}')">
-    <div class="ch"><div style="font-size:28px">${b.Emoji||'🎸'}</div><div><div class="cn">${b.Nome}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div></div>
-    <div class="cf"><span style="font-size:12px;color:var(--text3)">Toque para gerenciar</span><span style="color:var(--text3)">→</span></div>
-  </div>`).join('');
+
+  const [rMusicos, rEsc] = await Promise.all([api('getMusicos'), api('getEscalas')]);
+  const todosMusicos = rMusicos.ok ? rMusicos.data : [];
+  const todasEscalas = rEsc.ok ? rEsc.data : [];
+
+  el.innerHTML = '';
+  for (const b of _lBandas) {
+    const membrosIds = (b.MembrosIds||'').split(',').filter(Boolean);
+    const membros = membrosIds.map(mid => todosMusicos.find(x=>x.Id===mid) || {Id:mid,Nome:mid,Instrumentos:''});
+    const escalasB = todasEscalas.filter(e => e.BandaId === b.Id);
+
+    // Buscar aceites
+    const aceiteMap = {};
+    for (const esc of escalasB) {
+      const rEsc2 = await api('getEscalaById', { id: esc.Id });
+      if (rEsc2.ok) {
+        (rEsc2.aceites||[]).forEach(a => {
+          aceiteMap[a.MusicoId] = {
+            status: (a.Status||'pendente').toLowerCase(),
+            justificativa: a.Justificativa||'',
+          };
+        });
+      }
+    }
+
+    const aceitaram = membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length;
+    const recusaram = membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length;
+    const pendentes = membros.length - aceitaram - recusaram;
+
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.style.marginBottom = '16px';
+    div.innerHTML = `
+      <div class="ch">
+        <span style="font-size:26px">${b.Emoji||'🎸'}</span>
+        <div style="flex:1">
+          <div class="cn">${b.Nome||'—'}</div>
+          <div class="cs">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
+        </div>
+        ${escalasB.length ? `<div style="display:flex;gap:5px;font-size:11px">
+          <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 7px">✅${aceitaram}</span>
+          <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 7px">❌${recusaram}</span>
+          <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 7px">⏳${pendentes}</span>
+        </div>` : ''}
+      </div>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${membros.map(mem => {
+            const aceite = aceiteMap[mem.Id];
+            const st = escalasB.length ? (aceite?.status || 'pendente') : null;
+            const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':st?'#FBBF24':'var(--border)';
+            const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':st?'⏳':'';
+            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
+              <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
+                <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
+                ${st==='recusada'&&aceite?.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:2px">💬 "${aceite.justificativa}"</div>`:''}
+              </div>
+              ${st?`<span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>`:''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    el.appendChild(div);
+  }
 }
 
 function detBandaLid(id){
