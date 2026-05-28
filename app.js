@@ -1794,44 +1794,65 @@ async function modalEditarCel(id) {
   ]);
   load(false);
   const list = rCel.ok ? rCel.data : [];
-  const c = list.find(x => x.Id === id);
-  if (!c) { toast('Não encontrado','err'); return; }
+  const cel = list.find(x => x.Id === id);
+  if (!cel) { toast('Não encontrado','err'); return; }
+
   const reps  = rRep.ok ? rRep.data : [];
   const lides = rLE.ok  ? rLE.data  : [];
+  const s = getSess();
+  const isMaster = s && s.nivel === 'master';
+  const isLE     = s && s.nivel === 'liderequipe';
+  const podeRepLE = isLE && (cel.RepertorioTipo||'').toLowerCase() === 'liderequipe';
 
-  const celData = (c.Data||'').includes('T') ? c.Data.split('T')[0] : (c.Data||'');
-  const celHora = (c.Horario||'').length > 5 ? c.Horario.substring(0,5) : (c.Horario||'');
+  const celData = (cel.Data||'').includes('T') ? cel.Data.split('T')[0] : (cel.Data||'');
+  const celHora = (cel.Horario||'').length > 5 ? cel.Horario.substring(0,5) : (cel.Horario||'');
 
-  openM('Editar Celebração', `
-    <div class="fg"><label>Nome *</label><input type="text" id="ecNome" value="${(c.Nome||'').replace(/"/g,'&quot;')}"/></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data *</label><input type="date" id="ecDt" value="${celData}"/></div>
-      <div class="fg"><label>Horário *</label><input type="time" id="ecHr" value="${celHora}"/></div>
+  // Líder de equipe só pode editar campos básicos + repertório (se for do tipo liderequipe)
+  openM(isLE ? 'Celebração' : 'Editar Celebração', `
+    <div class="fg"><label>Nome *</label>
+      <input type="text" id="ecNome" value="${(cel.Nome||'').replace(/"/g,'&quot;')}" ${isLE?'readonly style="opacity:.6"':''}/>
     </div>
-    <div class="fg"><label>Local *</label><input type="text" id="ecLoc" value="${(c.Local||'').replace(/"/g,'&quot;')}"/></div>
-    <div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${c.Obs||''}</textarea></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="fg"><label>Data</label><input type="date" id="ecDt" value="${celData}" ${isLE?'readonly style="opacity:.6"':''}></div>
+      <div class="fg"><label>Horário</label><input type="time" id="ecHr" value="${celHora}" ${isLE?'readonly style="opacity:.6"':''}></div>
+    </div>
+    <div class="fg"><label>Local</label>
+      <input type="text" id="ecLoc" value="${(cel.Local||'').replace(/"/g,'&quot;')}" ${isLE?'readonly style="opacity:.6"':''}/>
+    </div>
+    ${!isLE ? `<div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${cel.Obs||''}</textarea></div>` : ''}
+
+    ${isMaster ? `
     <div class="fg"><label>Atribuir a Líder de Equipe</label>
       <select id="ecLiderEq">
         <option value="">— Sem líder de equipe —</option>
-        ${lides.map(l=>`<option value="${l.Id}" ${c.LiderEquipeId===l.Id?'selected':''}>${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
+        ${lides.map(l=>`<option value="${l.Id}" ${cel.LiderEquipeId===l.Id?'selected':''}>${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
       </select>
-      ${!lides.length?'<p style="font-size:11px;color:var(--text3);margin-top:4px">Nenhum líder de equipe cadastrado ainda.</p>':''}
-    </div>
-    <div class="fg"><label>Repertório</label>
+    </div>` : `<input type="hidden" id="ecLiderEq" value="${cel.LiderEquipeId||''}"/>`}
+
+    <div class="fg"><label>Repertório ${podeRepLE ? '' : isLE ? '<span style="font-size:10px;color:var(--text3)">(definido pelo Admin)</span>' : ''}</label>
+      ${podeRepLE || isMaster ? `
       <select id="ecRep">
         <option value="">— Sem repertório —</option>
-        ${reps.map(r=>`<option value="${r.Id}" ${c.RepertorioId===r.Id?'selected':''}>${r.Nome||'—'}</option>`).join('')}
-      </select>
+        ${reps.map(r=>`<option value="${r.Id}" ${cel.RepertorioId===r.Id?'selected':''}>${r.Nome||'—'}</option>`).join('')}
+      </select>` : `
+      <input type="text" value="${reps.find(r=>r.Id===cel.RepertorioId)?.Nome||'Não definido'}" readonly style="opacity:.6"/>
+      <input type="hidden" id="ecRep" value="${cel.RepertorioId||''}"/>`}
     </div>
+
+    ${isMaster ? `
     <div class="fg"><label>Quem define o repertório</label>
       <select id="ecRepT">
-        <option value="master" ${c.RepertorioTipo==='master'||c.RepertorioTipo==='admin'||!c.RepertorioTipo?'selected':''}>⚙️ Master define</option>
-        <option value="liderequipe" ${c.RepertorioTipo==='liderequipe'?'selected':''}>👥 Líder de equipe define</option>
+        <option value="master" ${cel.RepertorioTipo==='master'||cel.RepertorioTipo==='admin'||!cel.RepertorioTipo?'selected':''}>⚙️ Master define</option>
+        <option value="liderequipe" ${cel.RepertorioTipo==='liderequipe'?'selected':''}>👥 Líder de equipe define</option>
       </select>
-    </div>
+    </div>` : `
+    <input type="hidden" id="ecRepT" value="${cel.RepertorioTipo||'master'}"/>
+    <p style="font-size:11px;color:var(--text3)">📋 Quem define: ${cel.RepertorioTipo==='liderequipe'?'👥 Líder de equipe':'⚙️ Master'}</p>`}
+
+    ${!isLE ? '' : ''}
     <div class="mfoot">
       <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarEdicaoCel('${id}')">💾 Salvar</button>
+      ${isMaster || podeRepLE ? `<button class="btn-primary sm" onclick="salvarEdicaoCel('${id}')">💾 Salvar</button>` : ''}
     </div>`);
 }
 
