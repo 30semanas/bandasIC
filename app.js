@@ -674,8 +674,8 @@ function renderLRep(list){
   el.innerHTML=list.map(r=>{
     const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
     const pronto = r.RepReady === 'sim';
-    // CriadoPor vazio = repertório legado, qualquer um pode editar; master sempre pode
-    const eMeu = isMaster || !r.CriadoPor || r.CriadoPor === '' || String(r.CriadoPor) === String(myId||'');
+    // Master pode tudo; outros só editam/excluem os próprios
+    const eMeu = isMaster || (r.CriadoPor && r.CriadoPor !== '' && String(r.CriadoPor) === String(myId||''));
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
@@ -1523,12 +1523,12 @@ function buscarCelParaBanda(query) {
     const jaVinculada = outrasBandas.length > 0;
     const todasBandas = window._aBandas || [];
     const nomeBandaVinc = jaVinculada ? (todasBandas.find(x=>x.Id===outrasBandas[0])?.Nome||'outra banda') : '';
-    const bloqueada = !temRep || jaVinculada;
+    const bloqueada = jaVinculada;
     return `<div onclick="adicionarCelBanda('${cel.Id}')"
       style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);opacity:${bloqueada?0.5:1}"
       onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
       <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}
-        ${!temRep?'<span style="font-size:10px;color:var(--red)"> ⚠️ sem repertório</span>':''}
+        ${!temRep?'<span style="font-size:10px;color:var(--yellow)"> ⚠️ sem repertório</span>':''}
         ${jaVinculada?`<span style="font-size:10px;color:var(--red)"> ⛔ vinculada à ${nomeBandaVinc}</span>`:''}
       </div>
       <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
@@ -1547,12 +1547,6 @@ function adicionarCelBanda(celId) {
 
   const cel = (window._todasCels || []).find(c => c.Id === celId);
   if (!cel) return;
-
-  // Bloquear se não tem repertório
-  if (!cel.RepertorioId || cel.RepertorioId.trim() === '') {
-    toast('⚠️ Esta celebração não tem repertório definido. Atribua um repertório antes de vincular a banda.', 'err');
-    return;
-  }
 
   // Bloquear se celebração já tem OUTRA banda vinculada
   const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
@@ -2015,9 +2009,9 @@ async function loadRepertoriosAdmin(){
       return m2 ? m2.Nome : null;
     }).filter(Boolean);
 
-    // Só pode editar/excluir se for master OU se criou o repertório
-    // CriadoPor vazio = repertório legado, qualquer um pode editar; master sempre pode
-    const eMeu = isMaster || !r.CriadoPor || r.CriadoPor === '' || String(r.CriadoPor) === String(myId||'');
+    // Master pode tudo; outros só editam/excluem os próprios (CriadoPor = myId)
+    // CriadoPor vazio = legado, só master edita
+    const eMeu = isMaster || (r.CriadoPor && r.CriadoPor !== '' && String(r.CriadoPor) === String(myId||''));
     const pronto = r.RepReady === 'sim';
 
     return `
