@@ -680,7 +680,7 @@ function renderLRep(list){
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
-        <div class="li-sub">${musCount} música(s)${!eMeu?` • <span style="color:var(--text3);font-size:10px">por ${r.CriadoPorNome||'outro usuário'}</span>`:''}</div>
+        <div class="li-sub">${musCount} música(s)${(!eMeu && r.CriadoPor) ? ` • <span style="color:var(--text3);font-size:10px">por ${r.CriadoPorNome||'outro usuário'}</span>` : ''}</div>
       </div>
       <div style="display:flex;gap:6px">
         <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>
@@ -2023,7 +2023,7 @@ async function loadRepertoriosAdmin(){
       <div class="ch">
         <div style="flex:1">
           <div class="cn">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px;font-size:10px">✅ pronto</span>':''}</div>
-          <div class="cs" style="margin-top:2px">${musIds.length} música(s)${!eMeu?` <span style="font-size:10px;color:var(--text3)">• por ${r.CriadoPorNome||'outro usuário'}</span>`:''}</div>
+          <div class="cs" style="margin-top:2px">${musIds.length} música(s)${(!eMeu && r.CriadoPor) ? ` <span style="font-size:10px;color:var(--text3)">• por ${r.CriadoPorNome||'outro usuário'}</span>` : ''}</div>
         </div>
         <div style="display:flex;gap:6px">
           ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>` : ''}
