@@ -467,7 +467,14 @@ async function initLider(sess){
       });
     }
   }
-  window._lBandaAceites = aceiteData;
+  // Também guardar escalas por banda para renderLBandas
+  const escalasPorBanda = {};
+  for (const esc of escalasMinhasBandas) {
+    if (!escalasPorBanda[esc.BandaId]) escalasPorBanda[esc.BandaId] = [];
+    escalasPorBanda[esc.BandaId].push(esc);
+  }
+  window._lBandaAceites    = aceiteData;
+  window._lEscalasPorBanda = escalasPorBanda;
 
   load(false);
 
@@ -628,18 +635,19 @@ function ltab(id,el){
 function renderLBandas(){
   const el = document.getElementById('lBandasList');
   if (!_lBandas.length) { el.innerHTML = empty('🎸','Nenhuma banda'); return; }
-  // Usa dados já carregados em _lBandaAceites (carregado no initLider)
-  const aceiteData = window._lBandaAceites || {};
+  const aceiteData  = window._lBandaAceites     || {};
+  const escalasData = window._lEscalasPorBanda  || {};
 
   el.innerHTML = _lBandas.map(b => {
     const membrosIds = (b.MembrosIds||'').split(',').filter(Boolean);
     const membros = membrosIds.map(mid => {
       const mus = (_lTodosMusicos||[]).find(x => x.Id === mid);
-      return mus || { Id: mid, Nome: mid, Instrumentos: '' };
+      return mus || { Id:mid, Nome:mid, Instrumentos:'', WhatsApp:'' };
     });
 
-    const aceiteMap = aceiteData[b.Id] || {};
-    const temEscala = Object.keys(aceiteMap).length > 0;
+    const aceiteMap     = aceiteData[b.Id]  || {};
+    const escalasDaBanda = escalasData[b.Id] || [];
+    const temEscala      = escalasDaBanda.length > 0;
     const aceitaram = membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length;
     const recusaram = membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length;
     const pendentes = membros.length - aceitaram - recusaram;
@@ -658,22 +666,39 @@ function renderLBandas(){
           <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 7px">⏳${pendentes}</span>
         </div>` : '<span style="font-size:11px;color:var(--text3)">sem escala</span>'}
       </div>
+
+      ${temEscala ? `
+      <div style="margin-top:8px;padding:8px 10px;background:var(--bg3);border-radius:8px">
+        ${escalasDaBanda.map(e => {
+          const d = pd(e.Data||'');
+          return `<div style="font-size:12px;color:var(--text2)">📅 <strong>${e.Titulo||'Escala'}</strong> — ${d.day}/${d.mon}/${d.year} ${e.Horario?'• ⏰ '+e.Horario:''} ${e.Local?'• 📍 '+e.Local:''}</div>`;
+        }).join('')}
+      </div>` : ''}
+
       <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
         <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
         <div style="display:flex;flex-direction:column;gap:6px">
           ${membros.map(mem => {
-            const aceite = aceiteMap[mem.Id];
-            const st = temEscala ? (aceite?.status || 'pendente') : null;
+            const aceite  = aceiteMap[mem.Id];
+            const st      = temEscala ? (aceite?.status || 'pendente') : null;
             const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':st?'#FBBF24':'var(--border)';
             const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':st?'⏳':'';
-            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
-              <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
-              <div style="flex:1">
-                <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
-                <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
-                ${st==='recusada'&&aceite?.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:2px">💬 "${aceite.justificativa}"</div>`:''}
+            const waNum   = String(mem.WhatsApp||'').replace(/\D/g,'');
+            return `
+            <div style="background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 10px">
+                <div class="av" style="width:32px;height:32px;font-size:13px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
+                  <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}${mem.Eklesia?' • Ekl. '+mem.Eklesia:''}</div>
+                  ${waNum?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waNum)}</div>`:''}
+                  ${st==='recusada'&&aceite?.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:3px">💬 "${aceite.justificativa}"</div>`:''}
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
+                  ${st?`<span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>`:''}
+                  ${waNum?`<a href="https://wa.me/55${waNum}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:3px 8px;font-size:11px;text-decoration:none">💬</a>`:''}
+                </div>
               </div>
-              ${st?`<span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>`:''}
             </div>`;
           }).join('')}
         </div>
