@@ -164,15 +164,47 @@ async function initVol(sess){
   if (!minhasBandas.length) {
     bEl.innerHTML = empty('🎸','Sem banda vinculada');
   } else {
-    let html = minhasBandas.map(b=>`
-      <div class="card" style="margin-bottom:12px">
-        <div class="ch"><div style="font-size:28px">${b.Emoji||'🎸'}</div>
-          <div><div class="cn">${b.Nome}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div>
-        </div>
-      </div>`).join('');
+    // Buscar todos os músicos para resolver nomes dos membros
+    const rTodosMusicos = await api('getMusicos');
+    const todosMusicos = rTodosMusicos.ok ? rTodosMusicos.data : [];
 
-    // Buscar celebrações e repertórios da banda
+    let html = '';
     for (const banda of minhasBandas) {
+      const membrosIds = (banda.MembrosIds||'').split(',').filter(Boolean);
+      const membros = membrosIds.map(mid => {
+        const mus = todosMusicos.find(x => x.Id === mid);
+        return mus || { Id: mid, Nome: mid, Instrumentos: '' };
+      });
+
+      html += `
+      <div class="card" style="margin-bottom:16px">
+        <div class="ch">
+          <span style="font-size:28px">${banda.Emoji||'🎸'}</span>
+          <div style="flex:1">
+            <div class="cn">${banda.Nome||'—'}</div>
+            <div class="cs">Líder: ${banda.LiderNome||'—'} • ${membros.length} integrante(s)</div>
+          </div>
+        </div>
+
+        <!-- Integrantes -->
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+          <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${membros.map(mem => {
+              const isMe = mem.Id === s.mid;
+              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:${isMe?'rgba(124,111,247,.12)':'var(--bg3)'};border-radius:8px;${isMe?'border:1px solid var(--accent)':''}">
+                <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
+                <div style="flex:1">
+                  <div style="font-size:13px;font-weight:600">${mem.Nome||'—'} ${isMe?'<span style="font-size:10px;color:var(--accent)">• você</span>':''}</div>
+                  <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>`;
+
+      // Celebrações da banda
       const rCel = await api('getCelebracoesDaBanda', { bandaId: banda.Id });
       const cels = rCel.ok ? rCel.data : [];
       if (cels.length) {
@@ -183,19 +215,6 @@ async function initVol(sess){
           <div class="card" style="margin-bottom:10px">
             <div class="cn">${cel.Nome||'—'}</div>
             <div class="cs">📅 ${d.day}/${d.mon}/${d.year} • ⏰ ${cel.Horario||''} • 📍 ${cel.Local||''}</div>
-            ${cel.musicas && cel.musicas.length ? `
-              <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
-                <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📋 ${cel.repertorioNome||'Repertório'}</div>
-                ${cel.musicas.map((m,i)=>`
-                  <div class="li" style="margin-bottom:6px" onclick="detMusVoluntario('${m.Id||''}','${(m.Nome||'').replace(/'/g,'')}','${m.Tom||''}','${m.Bpm||''}','${(m.Youtube||'').replace(/'/g,'')}')">
-                    <div style="width:24px;height:24px;background:var(--bg4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
-                    <div class="li-info"><div class="li-name">${m.Nome||'—'}</div><div class="li-sub">${m.Artista||''} • ${m.Versao||''}</div></div>
-                    <div style="display:flex;gap:6px;align-items:center">
-                      <span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--accent2);background:var(--bg4);padding:2px 8px;border-radius:5px">${m.Tom||''}</span>
-                      <span style="font-size:11px;color:var(--text3)">${m.Bpm||''}bpm</span>
-                    </div>
-                  </div>`).join('')}
-              </div>` : '<div style="font-size:12px;color:var(--text3);margin-top:8px">Sem repertório definido</div>'}
           </div>`;
         }).join('');
         html += `</div>`;
@@ -416,31 +435,43 @@ async function initLider(sess){
   document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
   load(true);
-  const [rB, rE, rM, rME] = await Promise.all([
+  const [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
     api('getMinhasBandas'),
     api('getEscalas'),
     api('getMusicas'),
-    api('getMinhasEscalas'), // escalas pessoais do líder como voluntário
+    api('getMinhasEscalas'),
+    api('getRepertorios',{}),
+    api('getCelebracoes'),
   ]);
   load(false);
   _lBandas  = rB.ok  ? rB.data  : [];
   _lMusicas = rM.ok  ? rM.data  : [];
-  _vEscalas = rME.ok ? rME.data : []; // reutiliza variável do voluntário
+  _vEscalas = rME.ok ? rME.data : [];
+
+  // Filtrar repertórios das celebrações das minhas bandas
+  const todasCels = rCels.ok ? rCels.data : [];
+  const minhasBandasIds = new Set(_lBandas.map(b => b.Id));
+  const repIdsDasBandas = new Set();
+  todasCels.forEach(cel => {
+    const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
+    if (bandasDaCel.some(bid => minhasBandasIds.has(bid)) && cel.RepertorioId) {
+      repIdsDasBandas.add(cel.RepertorioId);
+    }
+  });
+  const todosReps = rRep.ok ? rRep.data : [];
+  // Mostrar: repertórios das celebrações da banda + os que o líder criou
+  const s = getSess();
+  const repsFiltered = todosReps.filter(r =>
+    repIdsDasBandas.has(r.Id) ||
+    (r.CriadoPor && r.CriadoPor === s.mid)
+  );
 
   renderLBandas();
   renderLEsc(rE.ok ? rE.data : []);
   renderLMus();
+  renderVEscInEl('lMinhasEscList');
+  renderLRep(repsFiltered);
 
-  // Renderizar escalas pessoais do líder na tab "Minhas Escalas"
-  const lMEEl = document.getElementById('lMinhasEsc');
-  if (lMEEl) {
-    _vEscFilter = 'todas';
-    // Renderizar igual ao voluntário
-    renderVEscInEl('lMinhasEscList');
-  }
-
-  const rRep  = await api('getRepertorios');
-  renderLRep(rRep.ok ? rRep.data : []);
   const rSubs = await api('getSubs');
   renderLSubs(rSubs.ok ? rSubs.data : []);
 }
@@ -861,16 +892,22 @@ function renderLiderEquipePanel() {
     const d = pd(cel.Data||'');
     const podeRep = cel.podeDefinirRepertorio;
 
-    // Build aceite map: musicoId -> status
+    // Mapa aceites: musicoId -> {status, justificativa}
     const aceiteMap = {};
     (cel.escalas||[]).forEach(esc => {
       (esc.aceites||[]).forEach(a => {
-        aceiteMap[a.MusicoId] = { status: (a.Status||'pendente').toLowerCase(), nome: a.MusicoNome||a.MusicoId };
+        aceiteMap[String(a.MusicoId)] = {
+          status: (a.Status||'pendente').toLowerCase(),
+          justificativa: a.Justificativa||''
+        };
       });
     });
 
+    const temBanda = cel.bandas && cel.bandas.length > 0;
+
     return `
     <div class="card" style="margin-bottom:16px">
+
       <!-- Cabeçalho Celebração -->
       <div class="ch">
         <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
@@ -886,36 +923,53 @@ function renderLiderEquipePanel() {
       </div>
 
       <!-- Bandas e Músicos -->
-      ${cel.bandas && cel.bandas.length ? `
+      ${temBanda ? `
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        ${cel.bandas.map(b => `
-          <div style="margin-bottom:14px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span style="font-size:18px">${b.Emoji||'🎸'}</span>
-              <span style="font-size:14px;font-weight:700">${b.Nome||'—'}</span>
-              <span style="font-size:11px;color:var(--text3)">• ${(b.membros||[]).length} integrante(s)</span>
+        ${cel.bandas.map(b => {
+          const membros = b.membros || [];
+          const aceitaram = membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'aceita').length;
+          const recusaram = membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'recusada').length;
+          const pendentes = membros.length - aceitaram - recusaram;
+          return `
+          <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px">
+            <!-- Cabeçalho Banda -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <span style="font-size:20px">${b.Emoji||'🎸'}</span>
+              <div style="flex:1">
+                <div style="font-size:14px;font-weight:700">${b.Nome||'—'}</div>
+                <div style="font-size:11px;color:var(--text3)">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
+              </div>
+              <div style="display:flex;gap:6px;font-size:11px">
+                <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ ${aceitaram}</span>
+                <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ ${recusaram}</span>
+                <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ ${pendentes}</span>
+              </div>
             </div>
-            <div style="display:flex;flex-direction:column;gap:6px;padding-left:8px">
-              ${(b.membros||[]).map(mem => {
-                const aceite = aceiteMap[mem.Id] || { status: 'pendente', nome: mem.Nome };
+
+            <!-- Lista de Músicos -->
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${membros.length ? membros.map(mem => {
+                const aceite = aceiteMap[String(mem.Id)] || { status: 'pendente' };
                 const st = aceite.status;
-                const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':'var(--yellow)';
+                const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':'#FBBF24';
                 const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':'⏳';
                 return `
-                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
-                  <div class="av" style="width:28px;height:28px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg2);border-radius:8px;border-left:3px solid ${stColor}">
+                  <div class="av" style="width:32px;height:32px;font-size:13px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
                   <div style="flex:1;min-width:0">
                     <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
-                    <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||''}</div>
+                    <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
+                    ${st==='recusada'&&aceite.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:2px">💬 "${aceite.justificativa}"</div>`:''}
                   </div>
-                  <span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>
+                  <span style="font-size:12px;color:${stColor};font-weight:600;flex-shrink:0">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>
                 </div>`;
-              }).join('')}
+              }).join('') : '<p style="font-size:12px;color:var(--text3);text-align:center">Nenhum integrante cadastrado</p>'}
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>` : `
-      <div style="margin-top:10px;padding:10px;background:var(--bg3);border-radius:8px">
-        <p style="font-size:12px;color:var(--text3);text-align:center">Nenhuma banda vinculada ainda</p>
+      <div style="margin-top:10px;padding:10px;background:var(--bg3);border-radius:8px;text-align:center">
+        <p style="font-size:12px;color:var(--text3)">Nenhuma banda vinculada a esta celebração ainda</p>
       </div>`}
     </div>`;
   }).join('');
@@ -2497,13 +2551,21 @@ async function sincronizar() {
     toast('Sincronizado! ✅', 'ok');
     return;
   } else if (s.nivel === 'liderbanda') {
-    const [rB,rE,rRep,rME] = await Promise.all([api('getMinhasBandas'),api('getEscalas'),api('getRepertorios',{}),api('getMinhasEscalas')]);
+    const [rB,rE,rRep,rME,rCels] = await Promise.all([api('getMinhasBandas'),api('getEscalas'),api('getRepertorios',{}),api('getMinhasEscalas'),api('getCelebracoes')]);
     _lBandas = rB.ok ? rB.data : [];
     _lMusicas = [];
     _vEscalas = rME.ok ? rME.data : [];
+    // Filtrar repertórios das celebrações das minhas bandas
+    const _syncCels = rCels.ok ? rCels.data : [];
+    const _syncBIds = new Set(_lBandas.map(b => b.Id));
+    const _syncRepIds = new Set();
+    _syncCels.forEach(cel => {
+      if ((cel.BandasIds||'').split(',').some(bid => _syncBIds.has(bid)) && cel.RepertorioId) _syncRepIds.add(cel.RepertorioId);
+    });
+    const _syncReps = (rRep.ok ? rRep.data : []).filter(r => _syncRepIds.has(r.Id) || (r.CriadoPor && r.CriadoPor === s.mid));
     renderLBandas();
     renderLEsc(rE.ok ? rE.data : []);
-    renderLRep(rRep.ok ? rRep.data : []);
+    renderLRep(_syncReps);
   } else if (s.nivel === 'musico') {
     const rEsc = await api('getMinhasEscalas');
     _vEscalas = rEsc.ok ? rEsc.data : [];
