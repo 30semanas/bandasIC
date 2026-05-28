@@ -351,13 +351,19 @@ async function respEsc(escId, st){
   }
   load(true);
   const r=await api('responderEscala',{escalaId:escId,status:st,justificativa:''});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
+  if(!r.ok){load(false);toast(r.error||'Erro','err');return;}
   toast('Escala aceita! ✅','ok');
   closeD();
-  const rEsc=await api('getMinhasEscalas');
-  _vEscalas=rEsc.ok?rEsc.data:[];
+  // Atualizar status local imediatamente
+  const esc = _vEscalas.find(e=>e.Id===escId);
+  if(esc) esc.meuStatus='aceita';
   renderVEsc();
+  // Recarregar do servidor em background
+  api('getMinhasEscalas').then(rEsc=>{
+    load(false);
+    _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
+    renderVEsc();
+  });
 }
 
 async function confirmarRecusa(escId) {
@@ -366,13 +372,17 @@ async function confirmarRecusa(escId) {
   closeM();
   load(true);
   const r = await api('responderEscala',{escalaId:escId,status:'recusada',justificativa:just});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Escala recusada. Justificativa registrada.','info');
+  if(!r.ok){load(false);toast(r.error||'Erro','err');return;}
+  toast('Recusa registrada.','info');
   closeD();
-  const rEsc=await api('getMinhasEscalas');
-  _vEscalas=rEsc.ok?rEsc.data:[];
+  const esc2 = _vEscalas.find(e=>e.Id===escId);
+  if(esc2) esc2.meuStatus='recusada';
   renderVEsc();
+  api('getMinhasEscalas').then(rEsc=>{
+    load(false);
+    _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
+    renderVEsc();
+  });
 }
 
 function fvsub(f,el){ _vSubFilter=f; document.querySelectorAll('#vSubs .ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); }
