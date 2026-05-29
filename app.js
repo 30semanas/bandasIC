@@ -382,15 +382,17 @@ async function respEsc(escId, st){
   if(!r.ok){load(false);toast(r.error||'Erro','err');return;}
   toast('Escala aceita! ✅','ok');
   closeD();
-  // Atualizar status local imediatamente
   const esc = _vEscalas.find(e=>e.Id===escId);
   if(esc) esc.meuStatus='aceita';
   renderVEsc();
-  // Recarregar do servidor em background
-  api('getMinhasEscalas').then(rEsc=>{
+  // Recarregar em background e atualizar painel da banda se for lider
+  api('getMinhasEscalas').then(async rEsc=>{
     load(false);
     _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
     renderVEsc();
+    // Se for líder de banda, atualizar aceites da banda
+    const s=getSess();
+    if(s && s.nivel==='liderbanda') await recarregarAceitesBanda();
   });
 }
 
@@ -406,10 +408,12 @@ async function confirmarRecusa(escId) {
   const esc2 = _vEscalas.find(e=>e.Id===escId);
   if(esc2) esc2.meuStatus='recusada';
   renderVEsc();
-  api('getMinhasEscalas').then(rEsc=>{
+  api('getMinhasEscalas').then(async rEsc=>{
     load(false);
     _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
     renderVEsc();
+    const s=getSess();
+    if(s && s.nivel==='liderbanda') await recarregarAceitesBanda();
   });
 }
 
@@ -803,6 +807,8 @@ function renderLRep(list){
     const pronto = r.RepReady === 'sim';
     const criadoPor = (r.CriadoPor||'').trim();
     const eMeu = isMaster || criadoPor === '' || (criadoPor !== '' && criadoPor === (myId||''));
+    // Após liberar (pronto), só master e liderequipe podem editar/excluir
+    const podeEditar = eMeu && (isMaster || !pronto);
     return `<div class="li">
       <div class="li-info">
         <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
@@ -813,9 +819,9 @@ function renderLRep(list){
         </div>
       </div>
       <div style="display:flex;gap:6px">
-        <button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>
-        ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>` : ''}
-        ${eMeu ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
+        ${!pronto ? `<button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>` : `<span style="font-size:11px;color:var(--green);padding:5px 8px">🔒 Liberado</span>`}
+        ${podeEditar ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>` : ''}
+        ${podeEditar ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -2627,6 +2633,32 @@ function closeM(){ document.getElementById('mOverlay').classList.remove('open');
 // ===== DETAIL =====
 function openD(){ document.getElementById('detail').classList.add('open'); }
 function closeD(){ document.getElementById('detail').classList.remove('open'); }
+
+// Recarrega aceites das bandas do líder e re-renderiza
+async function recarregarAceitesBanda() {
+  const rEsc = await api('getEscalas');
+  const todasEscalas = rEsc.ok ? rEsc.data : [];
+  const escalasMinhasBandas = todasEscalas.filter(e => _lBandas.some(b => b.Id === e.BandaId));
+  const aceiteData = {};
+  const escalasPorBanda = {};
+  for (const esc of escalasMinhasBandas) {
+    const rEsc2 = await api('getEscalaById', { id: esc.Id });
+    if (rEsc2.ok) {
+      if (!aceiteData[esc.BandaId]) aceiteData[esc.BandaId] = {};
+      if (!escalasPorBanda[esc.BandaId]) escalasPorBanda[esc.BandaId] = [];
+      escalasPorBanda[esc.BandaId].push(esc);
+      (rEsc2.aceites||[]).forEach(a => {
+        aceiteData[esc.BandaId][a.MusicoId] = {
+          status: (a.Status||'pendente').toLowerCase(),
+          justificativa: a.Justificativa||'',
+        };
+      });
+    }
+  }
+  window._lBandaAceites    = aceiteData;
+  window._lEscalasPorBanda = escalasPorBanda;
+  renderLBandas();
+}
 
 // ===== SYNC =====
 async function sincronizar() {
