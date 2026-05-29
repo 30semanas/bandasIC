@@ -651,6 +651,17 @@ function renderLBandas(){
 
     const aceiteMap     = aceiteData[b.Id]  || {};
     const escalasDaBanda = escalasData[b.Id] || [];
+    const s = getSess();
+    // Para o próprio líder, usar _vEscalas (mais atualizado) como status
+    escalasDaBanda.forEach(esc => {
+      const minhaEsc = (_vEscalas||[]).find(e => e.Id === esc.Id);
+      if (minhaEsc && s && s.mid) {
+        aceiteMap[s.mid] = {
+          status: minhaEsc.meuStatus || 'pendente',
+          justificativa: minhaEsc.Justificativa || '',
+        };
+      }
+    });
     const temEscala      = escalasDaBanda.length > 0;
     const aceitaram = membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length;
     const recusaram = membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length;
