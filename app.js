@@ -283,8 +283,11 @@ async function detEscVol(id){
   load(false);
   if(!rEsc.ok){toast('Erro','err');return;}
   const e=rEsc.data, d=pd(e.Data), s=getSess();
+  // Buscar status: primeiro em _vEscalas (fonte mais atualizada), depois nos aceites
+  const minhaEscLocal = (_vEscalas||[]).find(ev => ev.Id === id);
   const meu=(rEsc.aceites||[]).find(a=>String(a.MusicoId)===String(s.mid));
-  const st=meu?.Status||meu?.status||'pendente';
+  // Prioridade: status local > aceites do servidor (evita row duplicada)
+  const st = minhaEscLocal?.meuStatus || meu?.Status || meu?.status || 'pendente';
   const jaAceita = st === 'aceita';
   const bib = rBib.ok ? rBib.data : [];
 
