@@ -192,12 +192,15 @@ async function initVol(sess){
           <div style="display:flex;flex-direction:column;gap:6px">
             ${membros.map(mem => {
               const isMe = mem.Id === s.mid;
-              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:${isMe?'rgba(124,111,247,.12)':'var(--bg3)'};border-radius:8px;${isMe?'border:1px solid var(--accent)':''}">
+              const waM = String(mem.WhatsApp||'').replace(/\D/g,'');
+            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:${isMe?'rgba(124,111,247,.12)':'var(--bg3)'};border-radius:8px;${isMe?'border:1px solid var(--accent)':''}">
                 <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
                 <div style="flex:1">
                   <div style="font-size:13px;font-weight:600">${mem.Nome||'—'} ${isMe?'<span style="font-size:10px;color:var(--accent)">• você</span>':''}</div>
                   <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
+                  ${waM&&!isMe?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waM)}</div>`:''}
                 </div>
+                ${waM&&!isMe?`<a href="https://wa.me/55${waM}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>`:''}
               </div>`;
             }).join('')}
           </div>
@@ -458,7 +461,8 @@ async function initLider(sess){
 
   // Pré-carregar aceites de todas as escalas das minhas bandas - UMA VEZ só
   const todasEscalas = rE.ok ? rE.data : [];
-  const aceiteData = {};  // bandaId -> { musicoId -> {status, justificativa} }
+  const aceiteData = {};
+  const subsPorBanda = {};  // bandaId -> { musicoId -> {status, justificativa} }
   const escalasMinhasBandas = todasEscalas.filter(e =>
     _lBandas.some(b => b.Id === e.BandaId)
   );
@@ -635,8 +639,16 @@ function ltab(id,el){
   document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
   document.getElementById(id).classList.add('active');
-  if (id === 'lMinhasEsc') renderVEscInEl('lMinhasEscList');
-  if (id === 'lBandas') renderLBandas();
+  if (id === 'lMinhasEsc') {
+    // Recarregar escalas pessoais ao abrir a aba
+    api('getMinhasEscalas').then(r => {
+      if (r.ok) { _vEscalas = r.data; renderVEscInEl('lMinhasEscList'); }
+    });
+  }
+  if (id === 'lBandas') {
+    // Recarregar aceites da banda ao abrir a aba
+    recarregarAceitesBanda();
+  }
 }
 
 function renderLBandas(){
@@ -721,6 +733,29 @@ function renderLBandas(){
           }).join('')}
         </div>
       </div>
+
+      <!-- Substitutos -->
+      ${(() => {
+        const subsB = (window._lBandaSubs||{})[b.Id] || [];
+        if (!subsB.length) return '';
+        return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">SUBSTITUTOS</p>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${subsB.map(sub => {
+              const waS = String(sub.WhatsApp||'').replace(/\D/g,'');
+              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid var(--accent2)">
+                <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0;background:rgba(251,191,36,.2);color:#FBBF24">${(sub.MusicoNome||'?')[0]}</div>
+                <div style="flex:1">
+                  <div style="font-size:13px;font-weight:600">${sub.MusicoNome||'—'} <span style="font-size:10px;color:var(--accent2)">• sub</span></div>
+                  <div style="font-size:11px;color:var(--text3)">${sub.Instrumentos||'—'}</div>
+                  ${waS?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waS)}</div>`:''}
+                </div>
+                ${waS?`<a href="https://wa.me/55${waS}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>`:''}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+      })()}
     </div>`;
   }).join('');
 }
@@ -2660,6 +2695,7 @@ async function recarregarAceitesBanda() {
     if (rEsc2.ok) {
       if (!aceiteData[esc.BandaId]) aceiteData[esc.BandaId] = {};
       if (!escalasPorBanda[esc.BandaId]) escalasPorBanda[esc.BandaId] = [];
+      if (!subsPorBanda[esc.BandaId]) subsPorBanda[esc.BandaId] = [];
       escalasPorBanda[esc.BandaId].push(esc);
       (rEsc2.aceites||[]).forEach(a => {
         aceiteData[esc.BandaId][a.MusicoId] = {
@@ -2667,10 +2703,26 @@ async function recarregarAceitesBanda() {
           justificativa: a.Justificativa||'',
         };
       });
+      // Collect subs
+      (rEsc2.data?.subs||[]).forEach(s => {
+        if (!subsPorBanda[esc.BandaId].find(x=>x.Id===s.Id)) subsPorBanda[esc.BandaId].push(s);
+      });
+    }
+  }
+  // Collect subs per banda from escalas
+  const subsPorBanda = {};
+  for (const esc of escalasMinhasBandas) {
+    const rE2 = await api('getEscalaById', { id: esc.Id });
+    if (rE2.ok && rE2.data?.subs?.length) {
+      if (!subsPorBanda[esc.BandaId]) subsPorBanda[esc.BandaId] = [];
+      rE2.data.subs.forEach(s => {
+        if (!subsPorBanda[esc.BandaId].find(x=>x.Id===s.Id)) subsPorBanda[esc.BandaId].push(s);
+      });
     }
   }
   window._lBandaAceites    = aceiteData;
   window._lEscalasPorBanda = escalasPorBanda;
+  window._lBandaSubs       = subsPorBanda;
   renderLBandas();
 }
 
