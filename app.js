@@ -478,12 +478,6 @@ async function initLider(sess){
       escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
     });
   }
-  // Também guardar escalas por banda para renderLBandas
-  const escalasPorBanda = {};
-  for (const esc of escalasMinhasBandas) {
-    if (!escalasPorBanda[esc.BandaId]) escalasPorBanda[esc.BandaId] = [];
-    escalasPorBanda[esc.BandaId].push(esc);
-  }
   window._lBandaAceites    = aceiteData;
   window._lEscalasPorBanda = escalasPorBanda;
 
