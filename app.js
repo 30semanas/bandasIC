@@ -514,10 +514,8 @@ async function initLider(sess){
   const todosReps = rRep.ok ? rRep.data : [];
   // Mostrar: repertórios das celebrações da banda + os que o líder criou
   const s = getSess();
-  const repsFiltered = todosReps.filter(r =>
-    repIdsDasBandas.has(r.Id) ||
-    (r.CriadoPor && r.CriadoPor === s.mid)
-  );
+  // Lider só vê repertórios das celebrações das SUAS bandas
+  const repsFiltered = todosReps.filter(r => repIdsDasBandas.has(r.Id));
 
   renderLBandas();
   renderLEsc(rE.ok ? rE.data : []);
@@ -739,6 +737,19 @@ function renderLBandas(){
                 <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
                   ${st?`<span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>`:''}
                   ${waNum?`<a href="https://wa.me/55${waNum}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:3px 8px;font-size:11px;text-decoration:none">💬</a>`:''}
+                  ${st==='recusada' ? (() => {
+                    const myNivel = getSess()?.nivel || '';
+                    const subAberta = aceite?.subAberta;
+                    const subNivel  = aceite?.subCriadoPorNivel || '';
+                    if (subAberta && subNivel !== myNivel) {
+                      return `<span style="font-size:10px;color:var(--text3);background:var(--bg4);border-radius:5px;padding:2px 7px">🔒 Sub solicitado</span>`;
+                    } else if (subAberta) {
+                      return `<span style="font-size:10px;color:var(--yellow);background:var(--bg4);border-radius:5px;padding:2px 7px">⏳ Sub aberto</span>`;
+                    } else {
+                      const escIdForSub = (escalasDaBanda[0]||{}).Id || '';
+                      return `<button onclick="modalPedirSub('${escIdForSub}','${mem.Id}','${(mem.Instrumentos||'').split(',')[0].trim()}')" style="background:rgba(251,191,36,.15);border:1px solid #FBBF24;color:#FBBF24;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">🔄 Chamar sub</button>`;
+                    }
+                  })() : ''}
                 </div>
               </div>
             </div>`;
@@ -979,6 +990,33 @@ async function salvarMus(){
   toast('Música adicionada! 🎵','ok'); closeM();
   const rM=await api('getMusicas'); _lMusicas=rM.ok?rM.data:[]; renderLMus();
   const rM2=await api('getMusicas'); renderAMusicas(rM2.ok?rM2.data:[]);
+}
+
+function modalPedirSub(escId, musicoOutId, instrumento) {
+  openM('Chamar Substituto', `
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Instrumento necessário para substituição:</p>
+    <div class="fg">
+      <label>Instrumento</label>
+      <select id="subInstrPedir">
+        ${['Voz','Violão','Guitarra','Baixo','Teclado','Bateria','Percussão','Backing Vocal']
+          .map(i => `<option value="${i}" ${i===instrumento?'selected':''}>${i}</option>`).join('')}
+      </select>
+    </div>
+    <div class="mfoot">
+      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
+      <button class="btn-primary sm" onclick="confirmarPedirSub('${escId}','${musicoOutId}')">🔄 Solicitar sub</button>
+    </div>`);
+}
+
+async function confirmarPedirSub(escId, musicoOutId) {
+  const instrumento = document.getElementById('subInstrPedir').value;
+  load(true);
+  const r = await api('criarSub', { escalaId: escId, musicoOutId, instrumento });
+  load(false);
+  if (!r.ok) { toast(r.error||'Erro','err'); return; }
+  toast('Substituição solicitada! ✅','ok');
+  closeM();
+  await recarregarAceitesBanda();
 }
 
 function modalSub(escId){
@@ -2752,7 +2790,7 @@ async function sincronizar() {
     _syncCels.forEach(cel => {
       if ((cel.BandasIds||'').split(',').some(bid => _syncBIds.has(bid)) && cel.RepertorioId) _syncRepIds.add(cel.RepertorioId);
     });
-    const _syncReps = (rRep.ok ? rRep.data : []).filter(r => _syncRepIds.has(r.Id) || (r.CriadoPor && r.CriadoPor === s.mid));
+    const _syncReps = (rRep.ok ? rRep.data : []).filter(r => _syncRepIds.has(r.Id));
     // Recarregar aceites
     _lTodosMusicos = (await api('getMusicos')).data || [];
     const _syncEscB = (rE.ok?rE.data:[]).filter(e=>_syncBIds.has(e.BandaId));
