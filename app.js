@@ -445,14 +445,22 @@ async function initLider(sess){
   document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
   load(true);
-  const [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
-    api('getMinhasBandas'),
-    api('getEscalas'),
-    api('getMusicos'),   // todos os músicos para resolver nomes
-    api('getMinhasEscalas'),
-    api('getRepertorios',{}),
-    api('getCelebracoes'),
-  ]);
+  let rB,rE,rM,rME,rRep,rCels;
+  try {
+    [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
+      api('getMinhasBandas'),
+      api('getEscalas'),
+      api('getMusicos'),
+      api('getMinhasEscalas'),
+      api('getRepertorios',{}),
+      api('getCelebracoes'),
+    ]);
+  } catch(e) {
+    console.error('initLider load error:', e);
+    load(false);
+    toast('Erro ao carregar dados. Tente sincronizar.','err');
+    return;
+  }
 
   _lBandas  = rB.ok  ? rB.data  : [];
   _lTodosMusicos = rM.ok ? rM.data : [];  // global com todos os músicos
@@ -462,10 +470,13 @@ async function initLider(sess){
   // Pré-carregar aceites diretamente da aba Aceites
   const todasEscalas = rE.ok ? rE.data : [];
   const aceiteData = {};
-  for (const b of _lBandas) {
-    const rAc = await api('getAceitesDaBanda', { bandaId: b.Id });
-    aceiteData[b.Id]      = rAc.ok ? rAc.data : {};
-    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+  if (_lBandas.length) {
+    const acRequests = _lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id }));
+    const acResults  = await Promise.all(acRequests);
+    _lBandas.forEach((b, i) => {
+      aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
+      escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+    });
   }
   // Também guardar escalas por banda para renderLBandas
   const escalasPorBanda = {};
@@ -998,10 +1009,15 @@ async function initLiderEquipe(sess) {
 
   // Carregar dados
   load(true);
-  const rME = await api('getMinhasEscalas');
-  _vEscalas = rME.ok ? rME.data : [];
-  await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
-  load(false);
+  try {
+    const rME = await api('getMinhasEscalas');
+    _vEscalas = rME.ok ? rME.data : [];
+    await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
+  } catch(e) {
+    console.error('initLiderEquipe error:', e);
+  } finally {
+    load(false);
+  }
 
   // Navegar para celebrações e mostrar painel LE dedicado
   apg('celebracoes');
@@ -2680,12 +2696,14 @@ async function recarregarAceitesBanda() {
   const escalasPorBanda = {};
   const subsPorBanda  = {};
 
-  for (const b of _lBandas) {
-    // Busca aceites DIRETAMENTE da aba Aceites via rota dedicada
-    const rAc = await api('getAceitesDaBanda', { bandaId: b.Id });
-    aceiteData[b.Id]     = rAc.ok ? rAc.data : {};
-    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
-    subsPorBanda[b.Id]   = [];
+  if (_lBandas.length) {
+    const acRequests = _lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id }));
+    const acResults  = await Promise.all(acRequests);
+    _lBandas.forEach((b, i) => {
+      aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
+      escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+      subsPorBanda[b.Id]    = [];
+    });
   }
 
   window._lBandaAceites    = aceiteData;
