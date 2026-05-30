@@ -296,15 +296,28 @@ async function detEscVol(id){
 
   // Buscar músicas do repertório
   let musicas = [];
-  if (e.RepertorioId) {
-    const rRep = await api('getRepertorios',{});
-    if (rRep.ok) {
-      const rep = rRep.data.find(r => r.Id === e.RepertorioId);
-      if (rep && rep.MusicasIds) {
-        const ids = rep.MusicasIds.split(',').filter(Boolean);
-        musicas = ids.map(mid => bib.find(m => m.Id === mid)).filter(Boolean);
+  let repAtual = null;
+  const rRep = await api('getRepertorios',{});
+  const todosReps = rRep.ok ? rRep.data : [];
+
+  // Tentar pelo RepertorioId da escala, depois pela celebração
+  const repId = e.RepertorioId || e.CelebracaoRepertorioId || '';
+  if (repId) {
+    repAtual = todosReps.find(r => r.Id === repId) || null;
+  }
+  // Se não achou, buscar pela celebração via BandaId
+  if (!repAtual && e.CelebracaoId) {
+    const rCel = await api('getCelebracoes');
+    if (rCel.ok) {
+      const cel = rCel.data.find(x => x.Id === e.CelebracaoId);
+      if (cel && cel.RepertorioId) {
+        repAtual = todosReps.find(r => r.Id === cel.RepertorioId) || null;
       }
     }
+  }
+  if (repAtual && repAtual.MusicasIds) {
+    const ids = repAtual.MusicasIds.split(',').filter(Boolean);
+    musicas = ids.map(mid => bib.find(m => m.Id === mid)).filter(Boolean);
   }
 
   document.getElementById('dTitle').textContent = e.Titulo||'Escala';
@@ -321,7 +334,9 @@ async function detEscVol(id){
       <h3>📋 Repertório</h3>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${musicas.map((m,i) => {
-          const ov = (e.overrides && e.overrides[m.Id]) ? e.overrides[m.Id] : {};
+          // Overrides: da escala (getEscalaById) ou direto do repertório
+          const repOverrides = repAtual?.Overrides ? (() => { try { return JSON.parse(repAtual.Overrides); } catch(ex) { return {}; } })() : {};
+          const ov = (e.overrides && e.overrides[m.Id]) ? e.overrides[m.Id] : (repOverrides[m.Id] || {});
           const tom    = ov.tom    || '';
           const bpm    = ov.bpm    || '';
           const versao = ov.versao || m.Versao || '';
