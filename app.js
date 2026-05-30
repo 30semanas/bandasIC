@@ -146,10 +146,8 @@ async function initVol(sess){
   document.getElementById('vGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'! 👋';
   document.getElementById('vEkl').textContent = sess.eklesia;
   show('sVol');
-  load(false);
   load(true);
-  const rEsc   = await api('getMinhasEscalas');
-  const rBandas= await api('getBandas');
+  const [rEsc, rBandas] = await Promise.all([api('getMinhasEscalas'), api('getBandas')]);
   load(false);
   _vEscalas = rEsc.ok ? rEsc.data : [];
   renderVEsc();
@@ -446,14 +444,23 @@ async function initLider(sess){
   document.getElementById('lNome').textContent = sess.nome;
   document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
-  load(false);
   load(true);
-  const rB   = await api('getMinhasBandas');
-  const rM   = await api('getMusicos');
-  const rME  = await api('getMinhasEscalas');
-  const rRep = await api('getRepertorios',{});
-  const rCels= await api('getCelebracoes');
-  const rE   = await api('getEscalas');
+  let rB,rE,rM,rME,rRep,rCels;
+  try {
+    [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
+      api('getMinhasBandas'),
+      api('getEscalas'),
+      api('getMusicos'),
+      api('getMinhasEscalas'),
+      api('getRepertorios',{}),
+      api('getCelebracoes'),
+    ]);
+  } catch(e) {
+    console.error('initLider load error:', e);
+    load(false);
+    toast('Erro ao carregar dados. Tente sincronizar.','err');
+    return;
+  }
 
   _lBandas  = rB.ok  ? rB.data  : [];
   _lTodosMusicos = rM.ok ? rM.data : [];  // global com todos os músicos
@@ -1001,13 +1008,16 @@ async function initLiderEquipe(sess) {
   if (btnNovaCel) btnNovaCel.style.display = 'none';
 
   // Carregar dados
-  load(false);
   load(true);
-  const rME = await api('getMinhasEscalas');
-  _vEscalas = rME.ok ? rME.data : [];
-  load(false);
-  await loadLiderEquipePanel();
-  await loadRepertoriosAdmin();
+  try {
+    const rME = await api('getMinhasEscalas');
+    _vEscalas = rME.ok ? rME.data : [];
+    await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
+  } catch(e) {
+    console.error('initLiderEquipe error:', e);
+  } finally {
+    load(false);
+  }
 
   // Navegar para celebrações e mostrar painel LE dedicado
   apg('celebracoes');
@@ -1127,8 +1137,7 @@ async function initAdmin(sess){
   document.getElementById('admTopAv').textContent=sess.nome[0]||'A';
   document.getElementById('admGreet').textContent='Bem-vindo, '+sess.nome.split(' ')[0]+'!';
   show('sAdm');
-  load(false);
-  try { await loadDash(); } catch(e) { toast('Erro no dashboard','err'); }
+  await loadDash();
 }
 
 function toggleSide(){ _sideOpen=!_sideOpen; document.getElementById('admSide').classList.toggle('open',_sideOpen); }
@@ -2686,17 +2695,14 @@ async function recarregarAceitesBanda() {
   const aceiteData    = {};
   const escalasPorBanda = {};
   const subsPorBanda  = {};
-
   if (_lBandas.length) {
-    const acRequests = _lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id }));
-    const acResults  = await Promise.all(acRequests);
+    const acResults = await Promise.all(_lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id })));
     _lBandas.forEach((b, i) => {
       aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
       escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
       subsPorBanda[b.Id]    = [];
     });
   }
-
   window._lBandaAceites    = aceiteData;
   window._lEscalasPorBanda = escalasPorBanda;
   window._lBandaSubs       = subsPorBanda;
