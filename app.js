@@ -468,18 +468,21 @@ async function initLider(sess){
   _vEscalas = rME.ok ? rME.data : [];
 
   // Pré-carregar aceites diretamente da aba Aceites
-  const todasEscalas = rE.ok ? rE.data : [];
-  const aceiteData = {};
+  const todasEscalas   = rE.ok ? rE.data : [];
+  const aceiteData     = {};
+  const escalasPorBanda = {};
+  const subsPorBanda   = {};
   if (_lBandas.length) {
-    const acRequests = _lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id }));
-    const acResults  = await Promise.all(acRequests);
+    const acResults = await Promise.all(_lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id })));
     _lBandas.forEach((b, i) => {
       aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
       escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+      subsPorBanda[b.Id]    = [];
     });
   }
   window._lBandaAceites    = aceiteData;
   window._lEscalasPorBanda = escalasPorBanda;
+  window._lBandaSubs       = subsPorBanda;
 
   load(false);
 
