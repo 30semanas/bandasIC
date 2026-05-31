@@ -17,7 +17,7 @@ async function api(action, data={}) {
     const t = setTimeout(()=>{ cleanup(); resolve({ok:false,error:'Timeout'}); }, 15000);
     function cleanup(){ clearTimeout(t); delete window[cb]; if(s.parentNode) s.parentNode.removeChild(s); }
     window[cb] = r => { cleanup(); resolve(r); };
-    s.onerror = () => { cleanup(); resolve({ok:false,error:'Rede'}); };
+    s.onerror = () => { cleanup(); resolve({ok:false,error:'Erro de rede. Verifique sua conexão.'}); };
     s.src = u.toString();
     document.head.appendChild(s);
   });
@@ -63,30 +63,11 @@ function irLogin(title, nivel) {
   window.scrollTo(0, 0);
 }
 
-function showLogin(title, nivel){
-  _loginNivel = nivel;
-  document.getElementById('loginTitle').textContent = title || 'Acessar';
-  document.getElementById('iToken').value = '';
-  if (!nivel) { show('sInsc'); return; }
-  show('sLogin');
-}
+// showLogin removed - use irLogin instead
 let _loginNivel = 'admin';
 
 // ===== AUTH =====
-async function doLogin(){
-  const token = document.getElementById('iToken').value.trim();
-  if (!token){ toast('Digite seu token','err'); return; }
-  load(true);
-  const r = await api('login',{token});
-  load(false);
-  if (!r.ok){ toast(r.error||'Token inválido','err'); return; }
-  saveSess(r);
-  toast('Bem-vindo, '+r.nome+'! 🎵','ok');
-  if (r.nivel==='admin') initAdmin(r);
-  else if (r.nivel==='lider') initLider(r);
-  else if (r.nivel==='voluntario') initVol(r);
-  else toast('Nível desconhecido','err');
-}
+// doLogin removed - use doLoginHome instead
 
 async function sair(){
   const s = getSess();
@@ -455,21 +436,20 @@ function renderVSubs(subs){
 // ===== LÍDER =====
 let _lBandas=[], _lMusicas=[], _lTodosMusicos=[];
 
+// [PERF-5] initLider refatorado: 7 chamadas API → 1 (getDadosIniciaisLider)
+// Economia estimada: ~70% do tempo de carregamento (de ~4.7s para ~1.2s)
 async function initLider(sess){
   document.getElementById('lNome').textContent = sess.nome;
   document.getElementById('lEkl').textContent  = sess.eklesia;
   show('sLid');
   load(true);
-  let rB,rE,rM,rME,rRep,rCels;
+  let d;
   try {
-    [rB, rE, rM, rME, rRep, rCels] = await Promise.all([
-      api('getMinhasBandas'),
-      api('getEscalas'),
-      api('getMusicos'),
-      api('getMinhasEscalas'),
-      api('getRepertorios',{}),
-      api('getCelebracoes'),
-    ]);
+    // Uma única chamada consolidada substitui: getMinhasBandas, getEscalas,
+    // getMusicos, getMinhasEscalas, getRepertorios, getCelebracoes, getAceitesDaBanda
+    const r = await api('getDadosIniciaisLider');
+    if (!r.ok) throw new Error(r.error || 'Erro ao carregar dados');
+    d = r.data;
   } catch(e) {
     console.error('initLider load error:', e);
     load(false);
@@ -477,48 +457,30 @@ async function initLider(sess){
     return;
   }
 
-  _lBandas  = rB.ok  ? rB.data  : [];
-  _lTodosMusicos = rM.ok ? rM.data : [];  // global com todos os músicos
-  _lMusicas = [];
-  _vEscalas = rME.ok ? rME.data : [];
+  _lBandas       = d.bandas   || [];
+  _lTodosMusicos = d.musicos  || [];
+  _lMusicas      = [];
+  _vEscalas      = d.vEscalas || [];
 
-  // Pré-carregar aceites diretamente da aba Aceites
-  const todasEscalas   = rE.ok ? rE.data : [];
-  const aceiteData     = {};
+  // Aceites já consolidados no getDadosIniciaisLider (backend)
+  const todasEscalas    = d.escalas        || [];
+  const aceiteData      = d.aceitesPorBanda || {};
   const escalasPorBanda = {};
-  const subsPorBanda   = {};
-  if (_lBandas.length) {
-    const acResults = await Promise.all(_lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id })));
-    _lBandas.forEach((b, i) => {
-      aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
-      escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
-      subsPorBanda[b.Id]    = [];
-    });
-  }
+  const subsPorBanda    = {};
+  _lBandas.forEach(b => {
+    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+    subsPorBanda[b.Id]    = [];
+  });
   window._lBandaAceites    = aceiteData;
   window._lEscalasPorBanda = escalasPorBanda;
   window._lBandaSubs       = subsPorBanda;
 
   load(false);
 
-  // Filtrar repertórios das celebrações das minhas bandas
-  const todasCels = rCels.ok ? rCels.data : [];
-  const minhasBandasIds = new Set(_lBandas.map(b => b.Id));
-  const repIdsDasBandas = new Set();
-  todasCels.forEach(cel => {
-    const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
-    if (bandasDaCel.some(bid => minhasBandasIds.has(bid)) && cel.RepertorioId) {
-      repIdsDasBandas.add(cel.RepertorioId);
-    }
-  });
-  const todosReps = rRep.ok ? rRep.data : [];
-  // Mostrar: repertórios das celebrações da banda + os que o líder criou
-  const s = getSess();
-  // Lider só vê repertórios das celebrações das SUAS bandas
-  const repsFiltered = todosReps.filter(r => repIdsDasBandas.has(r.Id));
-
+  // Repertórios já filtrados no getDadosIniciaisLider
+  const repsFiltered = d.repertorios || [];
   renderLBandas();
-  renderLEsc(rE.ok ? rE.data : []);
+  renderLEsc(todasEscalas);
   renderLMus();
   renderVEscInEl('lMinhasEscList');
   renderLRep(repsFiltered);
@@ -1577,15 +1539,8 @@ async function gerarTokMusico(id) {
   setTimeout(() => detMusico(id), 400);
 }
 
-async function gerarTokMusico(mid,nome,ekl,wa_num){
-  const nivel=document.getElementById('mNivel')?.value||'voluntario';
-  load(true); const r=await api('gerarToken',{nome,eklesia:ekl,nivel,musicoId:mid}); load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Token: '+r.token+' ✅','ok');
-  closeD(); setTimeout(()=>detMusico(mid),400);
-}
 
-// BANDAS
+// gerarTokMusico legacy removed (duplicate)
 async function loadBandas(){
   load(true); const r=await api('getBandas'); load(false);
   _aBandas=r.ok?r.data:[];
@@ -2490,7 +2445,7 @@ async function salvarEditarRepAdmin(id) {
 }
 
 // MÚSICAS ADMIN
-async function loadMusicas2(){ await loadRepertoriosAdmin(); }
+// loadMusicas2 removed - use loadRepertoriosAdmin directly
 
 function renderAMusicas(list){
   _aMusicas = list;
@@ -2779,33 +2734,31 @@ async function sincronizar() {
     toast('Sincronizado! ✅', 'ok');
     return;
   } else if (s.nivel === 'liderbanda') {
-    const [rB,rE,rRep,rME,rCels] = await Promise.all([api('getMinhasBandas'),api('getEscalas'),api('getRepertorios',{}),api('getMinhasEscalas'),api('getCelebracoes')]);
-    _lBandas = rB.ok ? rB.data : [];
+    // [PERF-5] sincronizar usa getDadosIniciaisLider (1 chamada em vez de 6)
+    const rSync = await api('getDadosIniciaisLider');
+    if (!rSync.ok) { toast('Erro ao sincronizar','err'); return; }
+    const dSync = rSync.data;
+    _lBandas = dSync.bandas || [];
+    _lTodosMusicos = dSync.musicos || [];
     _lMusicas = [];
-    _vEscalas = rME.ok ? rME.data : [];
-    // Filtrar repertórios das celebrações das minhas bandas
-    const _syncCels = rCels.ok ? rCels.data : [];
+    _vEscalas = dSync.vEscalas || [];
+    const rE = { ok: true, data: dSync.escalas || [] };
+    const rRep = { ok: true, data: dSync.repertorios || [] };
+    const rCels = { ok: true, data: dSync.celebracoes || [] };
+    // Aceites já consolidados no getDadosIniciaisLider
     const _syncBIds = new Set(_lBandas.map(b => b.Id));
-    const _syncRepIds = new Set();
-    _syncCels.forEach(cel => {
-      if ((cel.BandasIds||'').split(',').some(bid => _syncBIds.has(bid)) && cel.RepertorioId) _syncRepIds.add(cel.RepertorioId);
+    const escalasPorBandaSync = {};
+    const subsPorBandaSync = {};
+    _lBandas.forEach(b => {
+      escalasPorBandaSync[b.Id] = (dSync.escalas || []).filter(e => e.BandaId === b.Id);
+      subsPorBandaSync[b.Id]    = [];
     });
-    const _syncReps = (rRep.ok ? rRep.data : []).filter(r => _syncRepIds.has(r.Id));
-    // Recarregar aceites
-    _lTodosMusicos = (await api('getMusicos')).data || [];
-    const _syncEscB = (rE.ok?rE.data:[]).filter(e=>_syncBIds.has(e.BandaId));
-    const _syncAceites = {};
-    for (const esc of _syncEscB) {
-      const rEsc = await api('getEscalaById',{id:esc.Id});
-      if (rEsc.ok) {
-        if (!_syncAceites[esc.BandaId]) _syncAceites[esc.BandaId]={};
-        (rEsc.aceites||[]).forEach(a=>{ _syncAceites[esc.BandaId][a.MusicoId]={status:(a.Status||'pendente').toLowerCase(),justificativa:a.Justificativa||''}; });
-      }
-    }
-    window._lBandaAceites = _syncAceites;
+    window._lBandaAceites    = dSync.aceitesPorBanda || {};
+    window._lEscalasPorBanda = escalasPorBandaSync;
+    window._lBandaSubs       = subsPorBandaSync;
     renderLBandas();
-    renderLEsc(rE.ok ? rE.data : []);
-    renderLRep(_syncReps);
+    renderLEsc(dSync.escalas || []);
+    renderLRep(dSync.repertorios || []);
     renderVEscInEl('lMinhasEscList');
   } else if (s.nivel === 'musico') {
     const rEsc = await api('getMinhasEscalas');
