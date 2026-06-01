@@ -2,27 +2,18 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0D0F14">
+<meta name="description" content="Bandas IC — Sistema de Gestão do Ministério de Música">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Bandas IC</title>
+<!-- Preconnect para Google Fonts (reduz latência de ~300ms) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
-<script>
-  // Limpar cache do navegador automaticamente
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-      regs.forEach(function(r) { r.unregister(); });
-    });
-    navigator.serviceWorker.addEventListener('message', function(e) {
-      if (e.data && e.data.type === 'CACHE_CLEARED') console.log('Cache limpo');
-    });
-  }
-  // Forçar revalidação de todos os recursos em cache
-  if (window.caches) {
-    caches.keys().then(function(names) {
-      names.forEach(function(name) { caches.delete(name); });
-    });
-  }
-</script>
 </head>
 <body>
 
@@ -36,7 +27,7 @@
       <p>Ministério de Música</p>
     </div>
     <div class="home-cards">
-      <button class="hcard" onclick="showLogin('Audição','')">
+      <button class="hcard" onclick="show('sInsc')">
         <div class="hcard-ico" style="background:linear-gradient(135deg,#FF6B9D,#FF8E53)">🎤</div>
         <div class="hcard-txt"><strong>Audição</strong><span>Quero me inscrever</span></div>
         <span class="hcard-arr">→</span>
@@ -44,23 +35,13 @@
       <div class="home-login-box">
         <p style="font-size:13px;color:var(--text2);margin-bottom:12px;text-align:center">Já faz parte do ministério? Entre com seu token:</p>
         <div class="fg" style="margin-bottom:12px">
-          <input type="password" id="homeToken" placeholder="Digite seu token de acesso" autocomplete="off" style="font-size:16px;padding:14px 16px;letter-spacing:2px" onkeydown="if(event.key==='Enter')doLoginHome()"/>
+          <input type="password" id="homeToken" placeholder="Digite seu token de acesso"
+            autocomplete="off" inputmode="text"
+            style="font-size:16px;padding:14px 16px;letter-spacing:2px"
+            onkeydown="if(event.key==='Enter')doLoginHome()"/>
         </div>
         <button class="btn-primary w100 lg" onclick="doLoginHome()">Entrar →</button>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- LOGIN -->
-<div id="sLogin" class="screen">
-  <div class="auth-wrap">
-    <button class="btn-back" onclick="show('sHome')">← Voltar</button>
-    <div class="auth-logo"><div class="logo sm">♪</div><span id="loginTitle">Acessar</span></div>
-    <div class="auth-card">
-      <div class="fg"><label>Token de acesso</label><input type="password" id="iToken" placeholder="••••••••••" autocomplete="off"/></div>
-      <button class="btn-primary w100" onclick="doLogin()">Entrar →</button>
-      <p class="auth-hint">Token enviado pelo administrador via WhatsApp</p>
     </div>
   </div>
 </div>
@@ -76,10 +57,10 @@
     <div class="fcard">
       <div class="fsec"><h3>Dados pessoais</h3>
         <div class="frow2">
-          <div class="fg"><label>Nome completo *</label><input type="text" id="iNome" placeholder="Seu nome"/></div>
+          <div class="fg"><label>Nome completo *</label><input type="text" id="iNome" placeholder="Seu nome" autocomplete="name"/></div>
           <div class="fg"><label>Eklesia / Igreja *</label><input type="text" id="iEkl" placeholder="Nome da sua igreja"/></div>
         </div>
-        <div class="fg"><label>WhatsApp *</label><input type="text" id="iWa" placeholder="(99) 99999-9999" oninput="applyPhoneMask(this)" maxlength="15"/></div>
+        <div class="fg"><label>WhatsApp *</label><input type="tel" id="iWa" placeholder="(99) 99999-9999" oninput="applyPhoneMask(this)" maxlength="15" inputmode="numeric"/></div>
         <div class="fg"><label>Foto (opcional)</label>
           <div class="upload-zone" onclick="document.getElementById('iFoto').click()">
             <div id="fotoPrev"><span style="font-size:32px">📷</span><p>Clique para enviar</p></div>
@@ -139,7 +120,7 @@
   </div>
 </div>
 
-<!-- LÍDER -->
+<!-- LÍDER DE BANDA -->
 <div id="sLid" class="screen">
   <div class="app-head">
     <div class="app-logo"><span class="logo xs">♪</span> Bandas IC</div>
@@ -169,7 +150,7 @@
     </div>
     <div id="lRep" class="tc">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <p style="font-size:12px;color:var(--text3)">Crie ou configure tom, BPM e versão nos repertórios da sua banda.</p>
+        <p style="font-size:12px;color:var(--text3)">Configure tom, BPM e versão nos repertórios da sua banda.</p>
         <button class="btn-primary sm" onclick="modalCriarRepertorioAdmin()">+ Novo</button>
       </div>
       <div id="lRepList" class="lc"></div>
@@ -182,12 +163,12 @@
   </div>
 </div>
 
-<!-- ADMIN -->
+<!-- ADMIN / LÍDER DE EQUIPE -->
 <div id="sAdm" class="screen">
   <div class="adm-layout">
     <aside class="sidebar" id="admSide">
       <div class="sb-logo"><div class="logo sm">♪</div><span>Bandas IC</span></div>
-      <div class="sb-user"><div class="av" id="admAv">A</div><div><strong id="admNome">Admin</strong><span class="rtag">Administrador</span></div></div>
+      <div class="sb-user"><div class="av" id="admAv">A</div><div><strong id="admNome">Admin</strong><span class="rtag" id="admNivelTag">Administrador</span></div></div>
       <nav class="sb-nav">
         <span class="nlabel">Gestão</span>
         <a class="ni active" onclick="apg('dashboard')" data-p="dashboard">⊞ Dashboard</a>
@@ -238,7 +219,7 @@
         <div id="admBandList" class="cg"></div>
       </div>
       <div id="ap-celebracoes" class="ap">
-        <div class="pg-head"><h1>Celebrações</h1><button class="btn-primary sm" onclick="modalCriarCel()">+ Nova celebração</button></div>
+        <div class="pg-head"><h1>Celebrações</h1><button class="btn-primary sm" id="btnNovaCel" onclick="modalCriarCel()">+ Nova celebração</button></div>
         <div id="lePanelList" class="lc" style="display:none"></div>
         <div id="admCelList" class="cg"></div>
       </div>
@@ -282,30 +263,25 @@
 <div id="loading" class="loading"><div class="spin"></div></div>
 
 <script>
-  // Cache buster: verifica se app.js foi atualizado via HEAD request
-  (function() {
-    var CACHE_KEY = 'bic_app_etag';
-    function loadScript(ver) {
-      var s = document.createElement('script');
-      s.src = 'app.js?v=' + ver;
-      document.body.appendChild(s);
-    }
-    // Faz HEAD request para pegar ETag/Last-Modified do app.js
-    fetch('app.js', { method: 'HEAD', cache: 'no-store' })
-      .then(function(r) {
-        var etag = r.headers.get('etag') || r.headers.get('last-modified') || Date.now();
-        var stored = localStorage.getItem(CACHE_KEY);
-        if (stored !== String(etag)) {
-          // Arquivo mudou - salva novo etag e carrega sem cache
-          localStorage.setItem(CACHE_KEY, String(etag));
-          loadScript(Date.now());
-        } else {
-          // Arquivo igual - usa versão guardada (cache válido)
-          loadScript(stored.replace(/[^a-zA-Z0-9]/g,'').substring(0,20));
-        }
-      })
-      .catch(function() { loadScript(Date.now()); });
-  })();
+// Cache buster: carrega app.js com versionamento por ETag
+(function() {
+  var CACHE_KEY = 'bic_app_v3';
+  function loadScript(ver) {
+    var s = document.createElement('script');
+    s.src = 'app.js?v=' + ver;
+    s.onerror = function() { console.error('Erro ao carregar app.js'); };
+    document.body.appendChild(s);
+  }
+  fetch('app.js', { method: 'HEAD', cache: 'no-store' })
+    .then(function(r) {
+      var etag = r.headers.get('etag') || r.headers.get('last-modified') || Date.now();
+      var stored = localStorage.getItem(CACHE_KEY);
+      var ver = String(etag).replace(/[^a-zA-Z0-9]/g,'').substring(0,20) || Date.now();
+      localStorage.setItem(CACHE_KEY, String(etag));
+      loadScript(ver);
+    })
+    .catch(function() { loadScript(Date.now()); });
+})();
 </script>
 </body>
 </html>
