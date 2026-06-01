@@ -316,8 +316,10 @@ async function detEscVol(id){
       <div style="display:flex;flex-direction:column;gap:8px">
         ${musicas.map((m,i) => {
           // Overrides: da escala (getEscalaById) ou direto do repertório
+          // BUG2-FIX: prioridade: overrides do rep (repAtual) > overrides da escala enriquecida
           const repOverrides = repAtual?.Overrides ? (() => { try { return JSON.parse(repAtual.Overrides); } catch(ex) { return {}; } })() : {};
-          const ov = (e.overrides && e.overrides[m.Id]) ? e.overrides[m.Id] : (repOverrides[m.Id] || {});
+          const escOverrides = (e.overrides && typeof e.overrides === 'object') ? e.overrides : {};
+          const ov = repOverrides[m.Id] || escOverrides[m.Id] || {};
           const tom    = ov.tom    || '';
           const bpm    = ov.bpm    || '';
           const versao = ov.versao || m.Versao || '';
@@ -636,23 +638,35 @@ function renderLBandas(){
       return mus || { Id:mid, Nome:mid, Instrumentos:'', WhatsApp:'' };
     });
 
-    const aceiteMap     = aceiteData[b.Id]  || {};
+    const aceiteMap      = aceiteData[b.Id]  || {};
     const escalasDaBanda = escalasData[b.Id] || [];
     const s = getSess();
-    // Para o próprio líder, usar _vEscalas (mais atualizado) como status
+
+    // BUG1-FIX: verificar se o repertório já foi liberado
+    // aceitesPorBanda só contém aceites de escalas com rep liberado (backend)
+    const repLiberado = aceiteData[b.Id + '__repLiberado'] === true;
+    const repPendente = aceiteData[b.Id + '__repPendente'] === true;
+
+    // BUG3-FIX: só atualizar aceite do líder com _vEscalas se a escala
+    // tiver rep liberado (evita mostrar "Pendente" antes da liberação)
     escalasDaBanda.forEach(esc => {
       const minhaEsc = (_vEscalas||[]).find(e => e.Id === esc.Id);
-      if (minhaEsc && s && s.mid) {
-        aceiteMap[s.mid] = {
-          status: minhaEsc.meuStatus || 'pendente',
-          justificativa: minhaEsc.Justificativa || '',
-        };
+      if (minhaEsc && minhaEsc.repReady && s && s.mid) {
+        // BUG3-FIX: só sobrescreve se não houver aceite já confirmado do servidor
+        const jaTemAceiteServidor = aceiteMap[s.mid] && aceiteMap[s.mid].status === 'aceita';
+        if (!jaTemAceiteServidor) {
+          aceiteMap[s.mid] = {
+            status: minhaEsc.meuStatus || 'pendente',
+            justificativa: minhaEsc.Justificativa || '',
+          };
+        }
       }
     });
-    const temEscala      = escalasDaBanda.length > 0;
-    const aceitaram = membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length;
-    const recusaram = membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length;
-    const pendentes = membros.length - aceitaram - recusaram;
+
+    const temEscala = escalasDaBanda.length > 0;
+    const aceitaram = repLiberado ? membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length : 0;
+    const recusaram = repLiberado ? membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length : 0;
+    const pendentes = repLiberado ? membros.length - aceitaram - recusaram : membros.length;
 
     return `
     <div class="card" style="margin-bottom:16px">
@@ -662,19 +676,24 @@ function renderLBandas(){
           <div class="cn">${b.Nome||'—'}</div>
           <div class="cs">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
         </div>
-        ${temEscala ? `<div style="display:flex;gap:5px;font-size:11px">
+        ${temEscala && repLiberado ? `<div style="display:flex;gap:5px;font-size:11px">
           <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 7px">✅${aceitaram}</span>
           <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 7px">❌${recusaram}</span>
           <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 7px">⏳${pendentes}</span>
-        </div>` : '<span style="font-size:11px;color:var(--text3)">sem escala</span>'}
+        </div>` : temEscala && repPendente ? `<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>` : '<span style="font-size:11px;color:var(--text3)">sem escala</span>'}
       </div>
 
       ${temEscala ? `
       <div style="margin-top:8px;padding:8px 10px;background:var(--bg3);border-radius:8px">
         ${escalasDaBanda.map(e => {
           const d = pd(e.Data||'');
-          return `<div style="font-size:12px;color:var(--text2)">📅 <strong>${e.Titulo||'Escala'}</strong> — ${d.day}/${d.mon}/${d.year} ${e.Horario?'• ⏰ '+e.Horario:''} ${e.Local?'• 📍 '+e.Local:''}</div>`;
+          // BUG1-FIX: mostrar aviso se rep não liberado
+          const repOk = e.repReady === true;
+          return `<div style="font-size:12px;color:var(--text2)">📅 <strong>${e.Titulo||'Escala'}</strong> — ${d.day}/${d.mon}/${d.year} ${e.Horario?'• ⏰ '+e.Horario:''} ${e.Local?'• 📍 '+e.Local:''}
+            ${!repOk ? '<span style="margin-left:8px;font-size:11px;color:var(--yellow);background:rgba(251,191,36,.12);border-radius:5px;padding:2px 7px">⏳ Aguardando repertório</span>' : ''}
+          </div>`;
         }).join('')}
+        ${repPendente ? `<div style="margin-top:6px;font-size:11px;color:var(--yellow)">⚙️ Configure e libere o repertório para que os músicos vejam e respondam a escala.</div>` : ''}
       </div>` : ''}
 
       <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
@@ -682,7 +701,8 @@ function renderLBandas(){
         <div style="display:flex;flex-direction:column;gap:6px">
           ${membros.map(mem => {
             const aceite  = aceiteMap[mem.Id];
-            const st      = temEscala ? (aceite?.status || 'pendente') : null;
+            // BUG1-FIX: só mostrar status se rep liberado; caso contrário mostra aviso
+            const st      = (temEscala && repLiberado) ? (aceite?.status || 'pendente') : null;
             const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':st?'#FBBF24':'var(--border)';
             const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':st?'⏳':'';
             const waNum   = String(mem.WhatsApp||'').replace(/\D/g,'');
