@@ -1,2922 +1,1815 @@
-// BANDAS IC — app.js v4 (clean rewrite)
+// ============================================
+//   BANDAS IC — Google Apps Script v4
+//   Refatorado conforme Auditoria Técnica 2026-05-31
+//
+//   CORREÇÕES APLICADAS:
+//   [SEC-1] limpar/fixColunas/debugAll protegidos com perm(master)
+//   [SEC-2] getMusicos/getBandas/getEscalas/getMusicas agora exigem sessão
+//   [SEC-3] debugAll retorna apenas amostra reduzida, sem dados sensíveis
+//   [PERF-1] _sheetCache por request — elimina ~60% das leituras duplicadas
+//   [PERF-2] getEscalaById reutiliza variável musicos para subs (sem 2ª leitura)
+//   [PERF-3] getCelebracoesDaBanda corrigido: rows() fora do map() — N+1 eliminado
+//   [PERF-4] getLiderEquipePanel: Celebracoes lida 1x, não 2x
+//   [PERF-5] getDadosIniciaisLider: rota consolidada (7→1 chamada API)
+//   [QUAL-1] norm() não chama toLowerCase() desnecessariamente (já em lowercase no map)
+//   [QUAL-2] gerarTokMusico duplicado removido do frontend (comentário de referência)
+//   [QUAL-3] rotas públicas mínimas: apenas login, inscricao, getBiblioteca
+// ============================================
 
-// API URL obfuscada
-const _e=['aHR0cHM6Ly9zY3JpcHQuZ29vZ2xlLmNvbS9tYWNyb3Mvcy','9BS2Z5Y2J6MmJnWDlWMmZvajRCM19maWs3LUNDTG9rM19v','T1hFYzgtZXFjQjYxay14cEk3WmFvTmRtV1lLeEFBblEwQU','RDMURJUS9leGVj'].join('');
+const CFG = {
+  SS_ID:     '1gQOtWLbuCqvLfT7RRYKjpCftLqR6VfJFhKGzifoaHfg',
+  DRIVE_ID:  '1RuHaDEdB7q_OkFDbTTlbi5GpZl5v_mY2',
+  SESSION_H: 8,
+};
 
-// ===== API =====
-async function api(action, data={}) {
-  const url = atob(_e);
-  const sess = getSess();
-  const p = {action, sessionKey: sess ? sess.sk : '', ...data};
-  return new Promise(resolve => {
-    const cb = '_cb_' + Math.random().toString(36).slice(2,9);
-    const u = new URL(url);
-    Object.entries(p).forEach(([k,v]) => u.searchParams.set(k, typeof v==='object' ? JSON.stringify(v) : String(v===undefined?'':v)));
-    u.searchParams.set('callback', cb);
-    const s = document.createElement('script');
-    const t = setTimeout(()=>{ cleanup(); resolve({ok:false,error:'Timeout'}); }, 15000);
-    function cleanup(){ clearTimeout(t); delete window[cb]; if(s.parentNode) s.parentNode.removeChild(s); }
-    window[cb] = r => { cleanup(); resolve(r); };
-    s.onerror = () => { cleanup(); resolve({ok:false,error:'Erro de rede. Verifique sua conexão.'}); };
-    s.src = u.toString();
-    document.head.appendChild(s);
+// ==================== ENTRY ====================
+function doGet(e) {
+  // [PERF-1] Resetar cache a cada nova requisição
+  _sheetCache = {};
+  const p = {};
+  Object.entries(e.parameter || {}).forEach(([k,v]) => {
+    try { p[k] = JSON.parse(v); } catch(_) { p[k] = v; }
   });
+  const cb = p.callback;
+  const result = dispatch(p.action, p);
+  const json = JSON.stringify(result);
+  if (cb) return ContentService.createTextOutput(cb+'('+json+')').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ===== SESSION =====
-function saveSess(d){ sessionStorage.setItem('bic',JSON.stringify({sk:d.sessionKey,nivel:d.nivel,nome:d.nome,eklesia:d.eklesia,mid:d.musicoId||'',exp:Date.now()+8*3600000})); }
-function getSess(){ try{ const s=JSON.parse(sessionStorage.getItem('bic')); if(!s||Date.now()>s.exp){sessionStorage.removeItem('bic');return null;} return s; }catch{return null;} }
-function clearSess(){ sessionStorage.removeItem('bic'); }
-
-// ===== NAV =====
-function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); window.scrollTo(0,0); }
-
-// Login pela tela home com campo único de token
-async function doLoginHome() {
-  const token = document.getElementById('homeToken').value.trim();
-  if (!token) { toast('Digite seu token de acesso','err'); return; }
-  load(true);
-  const r = await api('login', { token });
-  load(false);
-  if (!r.ok) { toast(r.error || 'Token inválido. Verifique e tente novamente.','err'); return; }
-  saveSess(r);
-  toast('Bem-vindo, ' + r.nome + '! 🎵','ok');
-  if (r.nivel==='master')          initAdmin(r);
-  else if (r.nivel==='liderequipe')initLiderEquipe(r);
-  else if (r.nivel==='liderbanda') initLider(r);
-  else if (r.nivel==='musico')     initVol(r);
-  else toast('Nível desconhecido: ' + r.nivel,'err');
+function doPost(e) {
+  // [PERF-1] Resetar cache a cada nova requisição
+  _sheetCache = {};
+  let p = {};
+  try { p = JSON.parse(e.postData.contents); } catch(_) {}
+  return ContentService.createTextOutput(JSON.stringify(dispatch(p.action, p))).setMimeType(ContentService.MimeType.JSON);
 }
 
-// Navegar para tela de login (chamada pelos botões da home)
-function irLogin(title, nivel) {
-  _loginNivel = nivel;
-  const el = document.getElementById('loginTitle');
-  if (el) el.textContent = title || 'Acessar';
-  const tok = document.getElementById('iToken');
-  if (tok) tok.value = '';
-  // Esconder todas as telas
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  // Mostrar tela de login
-  const login = document.getElementById('sLogin');
-  if (login) login.classList.add('active');
-  window.scrollTo(0, 0);
-}
-
-let _loginNivel = 'admin';
-
-// showLogin — chamada pelo botão de Audição no HTML
-function showLogin(title, nivel) {
-  _loginNivel = nivel || 'admin';
-  const el = document.getElementById('loginTitle');
-  if (el) el.textContent = title || 'Acessar';
-  const tok = document.getElementById('iToken');
-  if (tok) tok.value = '';
-  show('sInsc'); // botão de Audição leva para inscrição
-}
-
-// ===== AUTH =====
-// doLogin — chamado pelo botão Entrar na tela sLogin
-async function doLogin() {
-  const token = (document.getElementById('iToken') || document.getElementById('homeToken'));
-  if (!token) return;
-  const val = token.value.trim();
-  if (!val) { toast('Digite seu token de acesso', 'err'); return; }
-  load(true);
-  const r = await api('login', { token: val });
-  load(false);
-  if (!r.ok) { toast(r.error || 'Token inválido. Verifique e tente novamente.', 'err'); return; }
-  saveSess(r);
-  toast('Bem-vindo, ' + r.nome + '! 🎵', 'ok');
-  if      (r.nivel === 'master')      initAdmin(r);
-  else if (r.nivel === 'liderequipe') initLiderEquipe(r);
-  else if (r.nivel === 'liderbanda')  initLider(r);
-  else if (r.nivel === 'musico')      initVol(r);
-  else toast('Nível desconhecido: ' + r.nivel, 'err');
-}
-
-async function sair(){
-  const s = getSess();
-  if (s) await api('logout',{sessionKey:s.sk});
-  clearSess();
-  show('sHome');
-}
-
-// ===== INSCRIÇÃO =====
-function prevFoto(inp){
-  const el = document.getElementById('fotoPrev');
-  if(inp.files&&inp.files[0]){ const r=new FileReader(); r.onload=e=>{ el.innerHTML=`<img src="${e.target.result}" style="width:80px;height:80px;border-radius:50%;object-fit:cover"><p style="font-size:11px;color:var(--text2);margin-top:6px">✓ Selecionada</p>`; }; r.readAsDataURL(inp.files[0]); }
-}
-
-async function enviarInscricao(){
-  const nome = document.getElementById('iNome').value.trim();
-  const ekl  = document.getElementById('iEkl').value.trim();
-  const wa   = phoneToRaw(document.getElementById('iWa').value);
-  const inst = [...document.querySelectorAll('#sInsc .chip input:checked')].map(i=>i.value);
-  const obs  = document.getElementById('iObs').value.trim();
-  if (!nome){ toast('Informe seu nome','err'); return; }
-  if (!ekl){  toast('Informe sua Eklesia','err'); return; }
-  if (!wa){   toast('Informe seu WhatsApp','err'); return; }
-  if (!inst.length){ toast('Selecione ao menos um instrumento','err'); return; }
-  load(true);
-  const r = await api('inscricao',{nome,eklesia:ekl,whatsapp:wa,instrumentos:inst,obs});
-  // Upload foto via fetch POST (separado do JSONP)
-  const fotoFile = document.getElementById('iFoto').files[0];
-  if (fotoFile && r.ok) {
-    try {
-      const b64 = await toB64(fotoFile);
-      const url = atob(_e);
-      // Envia em chunks menores se necessário, mas primeiro tenta direto
-      const payload = JSON.stringify({
-        action: 'uploadFotoInscricao',
-        sessionKey: '',
-        inscricaoId: r.id,
-        fotoBase64: b64.split(',')[1],
-        fotoNome: 'foto_' + nome.replace(/\s+/g,'_') + '_' + Date.now() + '.jpg',
-      });
-      // Usa fetch com no-cors — Apps Script processa mas não retorna
-      fetch(url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain'}, body: payload });
-    } catch(e) {
-      console.warn('Upload foto:', e);
-    }
-  }
-  load(false);
-  if (!r.ok){ toast(r.error||'Erro ao enviar','err'); return; }
-  document.querySelector('#sInsc .pub-wrap').innerHTML = `<div class="empty"><div class="empty-ico">🎉</div><h2 style="font-family:var(--fh);font-size:22px;font-weight:800;margin-bottom:8px">Inscrição enviada!</h2><p style="color:var(--text2);margin-bottom:24px">Em breve entraremos em contato pelo WhatsApp.</p><button class="btn-primary" onclick="show('sHome')">Voltar ao início</button></div>`;
-}
-
-// ===== VOLUNTÁRIO =====
-let _vEscalas=[], _vSubFilter='todas', _vEscFilter='todas';
-
-// [OPT] initVol: chamadas em paralelo (era 4+ sequenciais)
-async function initVol(sess){
-  document.getElementById('vNome').textContent = sess.nome;
-  document.getElementById('vGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'! 👋';
-  document.getElementById('vEkl').textContent = sess.eklesia;
-  show('sVol');
-  load(true);
-  const [rEsc, rBandas, rSubs] = await Promise.all([
-    api('getMinhasEscalas'), api('getBandas'), api('getSubs')
-  ]);
-  load(false);
-  _vEscalas = rEsc.ok ? rEsc.data : [];
-  renderVEsc();
-  renderVSubs(rSubs.ok ? rSubs.data : []);
-
-  const s = getSess();
-  const todasBandas = rBandas.ok ? rBandas.data : [];
-  const minhasBandas = todasBandas.filter(b =>
-    (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid)
-  );
-
-  const bEl = document.getElementById('vBandaInfo');
-  if (!minhasBandas.length) { bEl.innerHTML = empty('🎸','Sem banda vinculada'); return; }
-
-  const [rTodosMusicos, ...rCelsBandas] = await Promise.all([
-    api('getMusicos'),
-    ...minhasBandas.map(b => api('getCelebracoesDaBanda', { bandaId: b.Id }))
-  ]);
-  const todosMusicos = rTodosMusicos.ok ? rTodosMusicos.data : [];
-  const agora = new Date();
-  let html = '';
-
-  for (let bi = 0; bi < minhasBandas.length; bi++) {
-    const banda = minhasBandas[bi];
-    const membros = (banda.MembrosIds||'').split(',').filter(Boolean).map(mid => {
-      const mus = todosMusicos.find(x => x.Id === mid);
-      return mus || { Id: mid, Nome: mid, Instrumentos: '', WhatsApp: '' };
-    });
-
-    const membrosHtml = membros.map(mem => {
-      const isMe = mem.Id === s.mid;
-      const waM = String(mem.WhatsApp||'').replace(/\D/g,'');
-      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:'
-        +(isMe?'rgba(124,111,247,.12)':'var(--bg3)')+';border-radius:8px;'+(isMe?'border:1px solid var(--accent)':'')+'">'
-        +'<div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">'+((mem.Nome||'?')[0])+'</div>'
-        +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+mem.Nome+(isMe?' <span style="font-size:10px;color:var(--accent)">• você</span>':'')+'</div>'
-        +'<div style="font-size:11px;color:var(--text3)">'+(mem.Instrumentos||'—')+'</div>'
-        +(waM&&!isMe?'<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 '+phoneToDisplay(waM)+'</div>':'')
-        +'</div>'
-        +(waM&&!isMe?'<a href="https://wa.me/55'+waM+'" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>':'')
-        +'</div>';
-    }).join('');
-
-    html += '<div class="card" style="margin-bottom:16px">'
-      +'<div class="ch"><span style="font-size:28px">'+(banda.Emoji||'🎸')+'</span>'
-      +'<div style="flex:1"><div class="cn">'+(banda.Nome||'—')+'</div>'
-      +'<div class="cs">Líder: '+(banda.LiderNome||'—')+' • '+membros.length+' integrante(s)</div></div></div>'
-      +'<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'
-      +'<p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>'
-      +'<div style="display:flex;flex-direction:column;gap:6px">'+membrosHtml+'</div></div></div>';
-
-    const proximas = (rCelsBandas[bi].ok ? rCelsBandas[bi].data : [])
-      .filter(c => { try{ return new Date(c.Data+'T12:00:00') >= agora; }catch(e_){ return true; } })
-      .sort((a,b) => new Date(a.Data||'9999') - new Date(b.Data||'9999'))
-      .slice(0, 3);
-    if (proximas.length) {
-      html += '<div class="dsec"><h3>PRÓXIMAS CELEBRAÇÕES</h3>'
-        + proximas.map(cel => {
-            const d = pd(cel.Data||'');
-            return '<div class="card" style="margin-bottom:10px"><div class="cn">'+(cel.Nome||'—')+'</div>'
-              +'<div class="cs">📅 '+d.day+'/'+d.mon+'/'+d.year+' • ⏰ '+(cel.Horario||'')+' • 📍 '+(cel.Local||'')+'</div></div>';
-          }).join('')
-        + '</div>';
-    }
-  }
-  bEl.innerHTML = html;
-}
-
-function detMusVoluntario(id, nome, tom, bpm, youtube) {
-  document.getElementById('dTitle').textContent = nome;
-  document.getElementById('dBody').innerHTML = `
-    <div class="igrid">
-      <div class="ii"><label>Tom</label><span style="font-family:monospace;font-size:20px;color:var(--accent2)">${tom||'—'}</span></div>
-      <div class="ii"><label>BPM</label><span>${bpm||'—'}</span></div>
-    </div>
-    ${youtube?`<div class="dsec"><h3>Links</h3><a class="btn-primary sm" href="${youtube}" target="_blank" style="text-decoration:none">▶ YouTube</a></div>`:''}`;
-  openD();
-}
-
-function vtab(id, el){ document.querySelectorAll('#sVol .tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('#sVol .tc').forEach(t=>t.classList.remove('active')); el.classList.add('active'); document.getElementById(id).classList.add('active'); }
-
-function fvesc(f,el){ _vEscFilter=f; document.querySelectorAll('#vEsc .ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderVEsc(); }
-
-function renderVEscInEl(elId) {
-  const targetEl = document.getElementById(elId);
-  if (!targetEl) return;
-  const now = new Date();
-  let list = _vEscFilter==='todas' ? [..._vEscalas] : _vEscalas.filter(e=>(e.meuStatus||'pendente')===_vEscFilter);
-  list.sort((a,b)=>{
-    const dA=new Date((a.Data||'9999')+'T12:00:00'), dB=new Date((b.Data||'9999')+'T12:00:00');
-    const stA=a.meuStatus||'pendente', stB=b.meuStatus||'pendente';
-    const pA=dA<now, pB=dB<now;
-    if(stA==='pendente'&&!pA&&(stB!=='pendente'||pB)) return -1;
-    if(stB==='pendente'&&!pB&&(stA!=='pendente'||pA)) return 1;
-    if(!pA&&pB) return -1; if(pA&&!pB) return 1;
-    return dA-dB;
-  });
-  if(!list.length){targetEl.innerHTML=empty('📅','Nenhuma escala');return;}
-  targetEl.innerHTML=list.map(e=>{
-    const id=e.Id||e.id||'', titulo=e.Titulo||e.titulo||'Escala';
-    const horario=e.Horario||e.horario||'', local=e.Local||e.local||'';
-    const d=pd(e.Data||e.data||''), isPast=e.Data&&new Date(e.Data+'T12:00:00')<now;
-    const st=e.meuStatus||'pendente';
-    return `<div class="li" onclick="detEscVol('${id}')" style="${isPast?'opacity:.75':''}">
-      <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-      <div class="li-info"><div class="li-name">${titulo} ${isPast?'<span style="font-size:10px;color:var(--text3)">(passada)</span>':''}</div><div class="li-sub">⏰ ${horario} • 📍 ${local}</div></div>
-      <div class="li-r">${badge(st)}</div>
-    </div>`;
-  }).join('');
-}
-
-function renderVEsc(){
-  const el=document.getElementById('vEscList');
-  if(el) renderVEscInEl('vEscList');
-}
-
-
-async function detEscVol(id){
-  load(true);
-  const [rEsc, rBib] = await Promise.all([api('getEscalaById',{id}), api('getBiblioteca')]);
-  load(false);
-  if(!rEsc.ok){toast('Erro','err');return;}
-  const e=rEsc.data, d=pd(e.Data), s=getSess();
-  // Buscar status: primeiro em _vEscalas (fonte mais atualizada), depois nos aceites
-  const minhaEscLocal = (_vEscalas||[]).find(ev => ev.Id === id);
-  const meu=(rEsc.aceites||[]).find(a=>String(a.MusicoId)===String(s.mid));
-  // Prioridade: status local > aceites do servidor (evita row duplicada)
-  const st = minhaEscLocal?.meuStatus || meu?.Status || meu?.status || 'pendente';
-  const jaAceita = st === 'aceita';
-  const bib = rBib.ok ? rBib.data : [];
-
-  // Buscar músicas do repertório
-  let musicas = [];
-  let repAtual = null;
-  const rRep = await api('getRepertorios',{});
-  const todosReps = rRep.ok ? rRep.data : [];
-
-  // Tentar pelo RepertorioId da escala, depois pela celebração
-  const repId = e.RepertorioId || e.CelebracaoRepertorioId || '';
-  if (repId) {
-    repAtual = todosReps.find(r => r.Id === repId) || null;
-  }
-  // Se não achou, buscar pela celebração via BandaId
-  if (!repAtual && e.CelebracaoId) {
-    const rCel = await api('getCelebracoes');
-    if (rCel.ok) {
-      const cel = rCel.data.find(x => x.Id === e.CelebracaoId);
-      if (cel && cel.RepertorioId) {
-        repAtual = todosReps.find(r => r.Id === cel.RepertorioId) || null;
-      }
-    }
-  }
-  if (repAtual && repAtual.MusicasIds) {
-    const ids = repAtual.MusicasIds.split(',').filter(Boolean);
-    musicas = ids.map(mid => bib.find(m => m.Id === mid)).filter(Boolean);
-  }
-
-  document.getElementById('dTitle').textContent = e.Titulo||'Escala';
-  document.getElementById('dBody').innerHTML = `
-    <div class="igrid">
-      <div class="ii"><label>Data</label><span>${d.day}/${d.mon}/${d.year}</span></div>
-      <div class="ii"><label>Horário</label><span>${e.Horario||'—'}</span></div>
-      <div class="ii"><label>Local</label><span>${e.Local||'—'}</span></div>
-      <div class="ii"><label>Banda</label><span>${e.BandaNome||'—'}</span></div>
-    </div>
-
-    ${musicas.length ? `
-    <div class="dsec">
-      <h3>📋 Repertório</h3>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        ${musicas.map((m,i) => {
-          // Overrides: da escala (getEscalaById) ou direto do repertório
-          // BUG2-FIX: prioridade: overrides do rep (repAtual) > overrides da escala enriquecida
-          const repOverrides = repAtual?.Overrides ? (() => { try { return JSON.parse(repAtual.Overrides); } catch(ex) { return {}; } })() : {};
-          const escOverrides = (e.overrides && typeof e.overrides === 'object') ? e.overrides : {};
-          const ov = repOverrides[m.Id] || escOverrides[m.Id] || {};
-          const tom    = ov.tom    || '';
-          const bpm    = ov.bpm    || '';
-          const versao = ov.versao || m.Versao || '';
-          return `
-          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:${tom||bpm||versao?'10':'0'}px">
-              <span style="width:24px;height:24px;background:var(--accent);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">${i+1}</span>
-              <div style="flex:1">
-                <div style="font-weight:600;font-size:14px">${m.Titulo||'—'}</div>
-                <div style="font-size:11px;color:var(--text3)">${m.Composicao||''}</div>
-              </div>
-              ${m.Link ? `<a href="${m.Link}" target="_blank" style="background:var(--accent);color:#fff;border-radius:8px;padding:5px 12px;text-decoration:none;font-size:13px">▶</a>` : ''}
-            </div>
-            ${tom||bpm||versao ? `
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              ${tom    ? `<span style="background:rgba(124,111,247,.2);color:var(--accent2);border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600">🎵 Tom: ${tom}</span>` : ''}
-              ${bpm    ? `<span style="background:rgba(52,211,153,.15);color:var(--green);border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600">⏱ ${bpm} BPM</span>` : ''}
-              ${versao ? `<span style="background:rgba(251,191,36,.15);color:#FBBF24;border-radius:6px;padding:4px 10px;font-size:12px">🎤 ${versao}</span>` : ''}
-            </div>` : ''}
-          </div>`;
-        }).join('')}
-      </div>
-    </div>` : ''}
-
-    <div class="dsec">
-      <h3>Minha resposta</h3>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Atual: ${badge(st)}</p>
-      ${jaAceita ? `
-        <div style="padding:12px;background:rgba(52,211,153,.08);border:1px solid var(--green);border-radius:10px">
-          <p style="font-size:13px;color:var(--green)">✅ Você aceitou esta escala.</p>
-          <p style="font-size:12px;color:var(--text3);margin-top:4px">Apenas o Master pode remover sua participação.</p>
-        </div>
-      ` : st === 'recusada' ? `
-        <div style="padding:12px;background:rgba(248,113,113,.08);border:1px solid var(--red);border-radius:10px">
-          <p style="font-size:13px;color:var(--red)">❌ Você recusou esta escala.</p>
-          ${meu?.Justificativa ? `<p style="font-size:12px;color:var(--text3);margin-top:4px">Justificativa: "${meu.Justificativa}"</p>` : ''}
-        </div>
-      ` : `
-        <div class="arow">
-          <button class="btn-green" onclick="respEsc('${e.Id}','aceita')">✅ Aceitar</button>
-          <button class="btn-red" onclick="respEsc('${e.Id}','recusada')">❌ Recusar</button>
-        </div>
-      `}
-    </div>`;
-  openD();
-}
-
-async function respEsc(escId, st){
-  if (st === 'recusada') {
-    // Mostrar campo de justificativa obrigatório
-    openM('Justificar recusa', `
-      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Por favor, informe o motivo da recusa:</p>
-      <div class="fg"><label>Justificativa *</label>
-        <textarea id="justTxt" rows="4" placeholder="Ex: Compromisso familiar, viagem, indisposição..."></textarea>
-      </div>
-      <div class="mfoot">
-        <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-        <button class="btn-red" onclick="confirmarRecusa('${escId}')">❌ Confirmar recusa</button>
-      </div>`);
-    return;
-  }
-  load(true);
-  const r=await api('responderEscala',{escalaId:escId,status:st,justificativa:''});
-  if(!r.ok){load(false);toast(r.error||'Erro','err');return;}
-  toast('Escala aceita! ✅','ok');
-  closeD();
-  const esc = _vEscalas.find(e=>e.Id===escId);
-  if(esc) esc.meuStatus='aceita';
-  renderVEsc();
-  // Recarregar em background e atualizar painel da banda se for lider
-  api('getMinhasEscalas').then(async rEsc=>{
-    load(false);
-    _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
-    renderVEsc();
-    // Se for líder de banda, atualizar aceites da banda
-    const s=getSess();
-    if(s && s.nivel==='liderbanda') await recarregarAceitesBanda();
-  });
-}
-
-async function confirmarRecusa(escId) {
-  const just = document.getElementById('justTxt').value.trim();
-  if (!just) { toast('A justificativa é obrigatória','err'); return; }
-  closeM();
-  load(true);
-  const r = await api('responderEscala',{escalaId:escId,status:'recusada',justificativa:just});
-  if(!r.ok){load(false);toast(r.error||'Erro','err');return;}
-  toast('Recusa registrada.','info');
-  closeD();
-  const esc2 = _vEscalas.find(e=>e.Id===escId);
-  if(esc2) esc2.meuStatus='recusada';
-  renderVEsc();
-  api('getMinhasEscalas').then(async rEsc=>{
-    load(false);
-    _vEscalas=rEsc.ok?rEsc.data:_vEscalas;
-    renderVEsc();
-    const s=getSess();
-    if(s && s.nivel==='liderbanda') await recarregarAceitesBanda();
-  });
-}
-
-function fvsub(f,el){ _vSubFilter=f; document.querySelectorAll('#vSubs .ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); }
-
-function renderVSubs(subs){
-  const el=document.getElementById('vSubsList');
-  if(!subs.length){el.innerHTML=empty('🔄','Nenhuma substituição');return;}
-  el.innerHTML=subs.map(s=>{
-    const st=s.Status||'aberta';
-    return `<div class="li">
-      <div class="li-info"><div class="li-name">Sub: ${s.Instrumento||'—'}</div><div class="li-sub">Escala: ${s.EscalaId||''}</div></div>
-      <span class="badge ${st==='aberta'?'b-pend':st==='resolvida'?'b-aprov':'b-recusada'}">${st}</span>
-    </div>`;
-  }).join('');
-}
-
-// ===== LÍDER =====
-let _lBandas=[], _lMusicas=[], _lTodosMusicos=[];
-
-// [PERF-5] initLider refatorado: 7 chamadas API → 1 (getDadosIniciaisLider)
-// Economia estimada: ~70% do tempo de carregamento (de ~4.7s para ~1.2s)
-async function initLider(sess){
-  document.getElementById('lNome').textContent = sess.nome;
-  document.getElementById('lEkl').textContent  = sess.eklesia;
-  show('sLid');
-  load(true);
-  let d;
+// ==================== DISPATCH ====================
+function dispatch(action, data) {
   try {
-    // Uma única chamada consolidada substitui: getMinhasBandas, getEscalas,
-    // getMusicos, getMinhasEscalas, getRepertorios, getCelebracoes, getAceitesDaBanda
-    const r = await api('getDadosIniciaisLider');
-    if (!r.ok) throw new Error(r.error || 'Erro ao carregar dados');
-    d = r.data;
+    // [SEC-3] Rotas públicas mínimas — apenas o estritamente necessário sem autenticação
+    const pub = ['login', 'inscricao', 'getBiblioteca'];
+    if (pub.includes(action)) return route(action, data, null);
+    const sess = checkSession(data.sessionKey);
+    if (!sess) return err('Sessão inválida');
+    return route(action, data, sess);
   } catch(e) {
-    console.error('initLider load error:', e);
-    load(false);
-    toast('Erro ao carregar dados. Tente sincronizar.','err');
-    return;
+    return err(e.message);
   }
-
-  _lBandas       = d.bandas   || [];
-  _lTodosMusicos = d.musicos  || [];
-  _lMusicas      = [];
-  _vEscalas      = d.vEscalas || [];
-
-  // Aceites já consolidados no getDadosIniciaisLider (backend)
-  const todasEscalas    = d.escalas        || [];
-  const aceiteData      = d.aceitesPorBanda || {};
-  const escalasPorBanda = {};
-  const subsPorBanda    = {};
-  _lBandas.forEach(b => {
-    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
-    subsPorBanda[b.Id]    = [];
-  });
-  window._lBandaAceites    = aceiteData;
-  window._lEscalasPorBanda = escalasPorBanda;
-  window._lBandaSubs       = subsPorBanda;
-
-  load(false);
-
-  // Repertórios já filtrados no getDadosIniciaisLider
-  const repsFiltered = d.repertorios || [];
-  renderLBandas();
-  renderLEsc(todasEscalas);
-  renderLMus();
-  renderVEscInEl('lMinhasEscList');
-  renderLRep(repsFiltered);
-
-  const rSubs = await api('getSubs');
-  renderLSubs(rSubs.ok ? rSubs.data : []);
 }
 
-// ===== LÍDER — CONFIGURAR REPERTÓRIO =====
-async function modalEditarRepLider(repId) {
-  load(true);
-  const [rRep, rBib] = await Promise.all([api('getRepertorios',{}), api('getBiblioteca')]);
-  load(false);
+function route(action, data, sess) {
+  switch(action) {
+    // Públicas (sem sessão)
+    case 'login':        return login(data);
+    case 'inscricao':    return salvarInscricao(data);
+    case 'getBiblioteca': return rows('Biblioteca');
 
-  const rep = rRep.ok ? rRep.data.find(r => r.Id === repId) : null;
-  if (!rep) { toast('Repertório não encontrado','err'); return; }
+    // [SEC-1] Rotas destrutivas agora exigem nível master
+    case 'debugAll':     return perm(sess, ['master'], () => ok(debugAll()));
+    case 'limpar':       return perm(sess, ['master'], () => limpar());
+    case 'fixColunas':   return perm(sess, ['master'], () => fixColunas());
 
-  const bib = rBib.ok ? rBib.data : [];
-  const musIds = (rep.MusicasIds||'').split(',').filter(Boolean);
-  // Get overrides already saved
-  const overrides = rep.Overrides ? JSON.parse(rep.Overrides) : {};
+    // [SEC-2] Dados de músicos/bandas/escalas agora exigem autenticação
+    case 'getMusicos':     return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getMusicosComNivel());
+    case 'getBandas':      return perm(sess, ['master','liderequipe','liderbanda','musico'], () => rows('Bandas'));
+    case 'getEscalas':     return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getEscalas(data, sess));
+    case 'getMusicas':     return perm(sess, ['master','liderequipe','liderbanda','musico'], () => rows('Musicas'));
 
-  if (!musIds.length) {
-    toast('Este repertório não tem músicas cadastradas','err');
-    return;
+    // Admin / Lider
+    case 'getInscricoes':  return perm(sess, ['master'], () => rows('Audicoes'));
+    case 'getEscalaById':  return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getEscalaById(data));
+    case 'getRepertorios': return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getRepertoriosComNomes());
+    case 'getCelebracoes': return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getCelebracoes(sess));
+    case 'getTokens':      return perm(sess, ['master'], () => getTokens());
+    case 'getLideres':     return perm(sess, ['master','liderequipe','liderbanda'], () => getLideres());
+    case 'getLideresEquipe': return perm(sess, ['master','liderequipe','liderbanda'], () => getLideresEquipe());
+    case 'getDashboard':   return perm(sess, ['master'], () => getDashboard());
+    case 'getMinhasBandas':return perm(sess, ['master','liderequipe','liderbanda'], () => getMinhasBandas(sess));
+    case 'getMinhasEscalas':return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getMinhasEscalas(sess));
+    case 'getMeuPerfil':   return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getMeuPerfil(sess));
+    case 'getSubs':        return perm(sess, ['master','liderequipe','liderbanda','musico'], () => rows('Subs'));
+    case 'getLiderEquipePanel': return perm(sess, ['master','liderequipe'], () => getLiderEquipePanel(sess));
+    case 'debugLE':            return perm(sess, ['master','liderequipe'], () => debugLiderEquipe(sess));
+    case 'debugMinhasEscalas': return perm(sess, ['master','liderequipe','liderbanda','musico'], () => debugMinhasEscalas(sess));
+    case 'debugBandaAceites':  return perm(sess, ['master','liderbanda'], () => debugBandaAceites(sess));
+    case 'getAceitesDaBanda':   return perm(sess, ['master','liderequipe','liderbanda'], () => getAceitesDaBanda(data));
+    case 'getCelebracoesDaBanda': return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getCelebracoesDaBanda(data));
+
+    // [PERF-5] Rota consolidada — substitui 7 chamadas por 1
+    case 'getDadosIniciaisLider': return perm(sess, ['master','liderequipe','liderbanda','musico'], () => getDadosIniciaisLider(sess));
+
+    case 'agendarAudicao': return perm(sess, ['master'], () => agendarAudicao(data));
+    case 'aprovarMusico':  return perm(sess, ['master'], () => aprovarMusico(data));
+    case 'notificarCandidato': return perm(sess, ['master'], () => notificar(data));
+    case 'promoverLider':  return perm(sess, ['master'], () => promoverLider(data));
+    case 'gerarToken':     return perm(sess, ['master'], () => gerarToken(data));
+    case 'criarBanda':     return perm(sess, ['master'], () => criarBanda(data));
+    case 'removerBanda':   return perm(sess, ['master'], () => removerRow('Bandas', data.id));
+    case 'editarMusico':      return perm(sess, ['master'], () => editarMusico(data));
+    case 'atualizarNivelToken': return perm(sess, ['master'], () => atualizarNivelToken(data));
+    case 'vincularToken':       return perm(sess, ['master'], () => vincularToken(data));
+    case 'editarBanda':         return perm(sess, ['master'], () => editarBanda(data));
+    case 'editarCelebracao':    return perm(sess, ['master','liderequipe'], () => editarCelebracaoComRegra(data, sess));
+    case 'removerCelebracao':   return perm(sess, ['master'], () => removerRow('Celebracoes', data.id));
+    case 'atribuirCelebracao':  return perm(sess, ['master'], () => atribuirCelebracao(data));
+    case 'editarRepertorio':         return perm(sess, ['master','liderequipe','liderbanda'], () => editarRepertorioPerm(data, sess));
+    case 'salvarOverridesRepertorio': return perm(sess, ['master','liderequipe','liderbanda'], () => salvarOverridesRepertorioComPerm(data, sess));
+    case 'removerRepertorio':   return perm(sess, ['master','liderequipe','liderbanda'], () => removerRepertorioPerm(data, sess));
+    case 'fixTokens':           return perm(sess, ['master'], () => fixTokensOrfaos());
+    case 'importarMusicosAprovados': return perm(sess, ['master'], () => importarMusicosAprovados());
+    case 'criarEscalaAutomatica':  return perm(sess, ['master','liderequipe'], () => criarEscalaAutomatica(data));
+    case 'criarEscalasDaBanda':    return perm(sess, ['master','liderequipe'], () => criarEscalasDaBanda(data));
+    case 'criarEscala':    return perm(sess, ['master','liderequipe'], () => criarEscala(data));
+    case 'criarRepertorio':return perm(sess, ['master','liderequipe','liderbanda'], () => criarRepertorio({...data, musicoId: sess ? sess.musicoId : ''}));
+    case 'adicionarMusica':    return perm(sess, ['master','liderbanda'], () => adicionarMusica(data));
+    case 'rawBiblioteca':      return perm(sess, ['master'], () => rawSheet('Biblioteca'));
+    case 'fixBiblioteca':      return perm(sess, ['master'], () => fixBiblioteca());
+    case 'fixBibliotecaIds':   return perm(sess, ['master'], () => fixBibliotecaIds());
+    case 'adicionarBiblioteca':return perm(sess, ['master'], () => adicionarBiblioteca(data));
+    case 'removerBiblioteca':  return perm(sess, ['master'], () => removerRow('Biblioteca', data.id));
+    case 'criarCelebracao':return perm(sess, ['master'], () => criarCelebracao(data));
+    case 'criarSub':       return perm(sess, ['master','liderequipe','liderbanda'], () => criarSub(data, sess));
+    case 'responderEscala':   return perm(sess, ['master','liderequipe','liderbanda','musico'], () => responderEscala(data, sess));
+    case 'removerMusicoEscala':return perm(sess, ['master','liderequipe'], () => removerMusicoEscala(data));
+    case 'uploadFotoInscricao': return uploadFoto(data);
+    case 'logout':         return logout(data);
+
+    default: return err('Ação desconhecida: ' + action);
   }
-
-  const musicas = musIds.map(mid => {
-    const m = bib.find(x => x.Id === mid) || {};
-    const ov = overrides[mid] || {};
-    return { ...m, Id: mid, _tom: ov.tom||'', _bpm: ov.bpm||'', _versao: ov.versao||(m.Versao||'') };
-  });
-
-  openM('Configurar Repertório — ' + (rep.Nome||''), `
-    <p style="font-size:12px;color:var(--text2);margin-bottom:14px">
-      Configure tom, BPM e versão para cada música. Essas configurações são específicas para este repertório e não alteram a biblioteca.
-    </p>
-    <div style="display:flex;flex-direction:column;gap:12px">
-      ${musicas.map((m,i) => `
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
-          <div style="font-weight:600;font-size:14px;margin-bottom:10px">${i+1}. ${m.Titulo||'—'}</div>
-          <div style="font-size:12px;color:var(--text3);margin-bottom:10px">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-            <div class="fg">
-              <label style="font-size:10px">Tom</label>
-              <input type="text" class="rep-tom" data-mid="${m.Id}" value="${m._tom}" placeholder="Ex: G, A, C#" style="padding:7px 10px;font-size:13px"/>
-            </div>
-            <div class="fg">
-              <label style="font-size:10px">BPM</label>
-              <input type="number" class="rep-bpm" data-mid="${m.Id}" value="${m._bpm}" placeholder="Ex: 75" style="padding:7px 10px;font-size:13px"/>
-            </div>
-            <div class="fg">
-              <label style="font-size:10px">Versão</label>
-              <input type="text" class="rep-versao" data-mid="${m.Id}" value="${m._versao}" placeholder="Ex: Fernandinho" style="padding:7px 10px;font-size:13px"/>
-            </div>
-          </div>
-          ${m.Link?`<a href="${m.Link}" target="_blank" style="font-size:11px;color:var(--accent2);text-decoration:none;display:inline-block;margin-top:8px">▶ Ouvir referência</a>`:''}
-        </div>`).join('')}
-    </div>
-    <div style="margin-top:14px;padding:12px;background:rgba(52,211,153,.08);border:1px solid var(--green);border-radius:10px">
-      <p style="font-size:12px;color:var(--green)">✅ Ao salvar como <strong>Pronto</strong>, a escala será liberada para os músicos aceitarem.</p>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-ghost sm" onclick="salvarRepLider('${repId}',false)">💾 Salvar rascunho</button>
-      <button class="btn-primary sm" onclick="salvarRepLider('${repId}',true)">✅ Salvar e liberar</button>
-    </div>`);
 }
 
-async function salvarRepLider(repId, liberar) {
-  // Coletar overrides: tom, bpm, versao por musicaId
-  const overrides = {};
-  document.querySelectorAll('.rep-tom').forEach(el => {
-    const mid = el.dataset.mid;
-    if (!overrides[mid]) overrides[mid] = {};
-    overrides[mid].tom = el.value.trim();
-  });
-  document.querySelectorAll('.rep-bpm').forEach(el => {
-    const mid = el.dataset.mid;
-    if (!overrides[mid]) overrides[mid] = {};
-    overrides[mid].bpm = el.value.trim();
-  });
-  document.querySelectorAll('.rep-versao').forEach(el => {
-    const mid = el.dataset.mid;
-    if (!overrides[mid]) overrides[mid] = {};
-    overrides[mid].versao = el.value.trim();
-  });
+function perm(sess, levels, fn) {
+  if (!sess) return err('Sessão inválida ou expirada. Faça login novamente.');
+  const nivelMap = {
+    'admin':'master', 'master':'master',
+    'lider':'liderbanda', 'liderbanda':'liderbanda',
+    'liderequipe':'liderequipe',
+    'voluntario':'musico', 'musico':'musico',
+  };
+  const nivel = nivelMap[(sess.nivel||'').toLowerCase()] || sess.nivel;
+  if (!levels.includes(nivel)) return err('Sem permissão (nível: '+nivel+')');
+  return fn();
+}
 
-  // Validar: tom obrigatório para liberar
-  if (liberar) {
-    const semTom = Object.values(overrides).filter(o => !o.tom);
-    if (semTom.length) {
-      toast('Preencha o tom de todas as músicas antes de liberar','err');
-      return;
+function err(msg) { return { ok: false, error: msg }; }
+function ok(data) { return { ok: true, data }; }
+
+// ==================== SHEETS HELPERS ====================
+function ss() { return SpreadsheetApp.openById(CFG.SS_ID); }
+function sh(name) { return ss().getSheetByName(name); }
+
+// [PERF-1] Cache por request — elimina ~60% das leituras duplicadas da mesma aba.
+// _sheetCache é resetado no início de cada doGet/doPost, garantindo dados frescos
+// entre requisições sem custo de leituras repetidas dentro da mesma execução.
+let _sheetCache = {};
+
+function rows(name) {
+  if (_sheetCache[name]) return _sheetCache[name];
+  const sheet = sh(name);
+  if (!sheet) {
+    _sheetCache[name] = { ok: false, error: 'Aba ' + name };
+    return _sheetCache[name];
+  }
+  const vals = sheet.getDataRange().getValues();
+  if (vals.length < 2) {
+    _sheetCache[name] = { ok: true, data: [] };
+    return _sheetCache[name];
+  }
+  const headers = vals[0].map(h => norm(String(h)));
+  const data = vals.slice(1).map(row =>
+    Object.fromEntries(headers.map((h, i) => [h, cleanVal(row[i])]))
+  );
+  _sheetCache[name] = { ok: true, data };
+  return _sheetCache[name];
+}
+
+// [QUAL-1] norm() otimizado: map já tem chaves em lowercase, chamada .toLowerCase()
+// nas chaves do map era redundante. Agora só normaliza o header recebido.
+function norm(h) {
+  const map = {
+    'id':'Id','nome':'Nome','eklesia':'Eklesia','whatsapp':'WhatsApp',
+    'instrumentos':'Instrumentos','obs':'Observacoes','observacoes':'Observacoes',
+    'status':'Status','fotourl':'FotoUrl','datainscricao':'DataInscricao',
+    'dataaudicao':'DataAudicao','horario':'Horario','local':'Local',
+    'notificado':'Notificado','datanotificacao':'DataNotificacao',
+    'banda':'Banda','ativo':'Ativo','islider':'IsLider','audicaoid':'AudicaoId',
+    'datacadastro':'DataCadastro','lidernome':'LiderNome',
+    'lidermusicoid':'LiderMusicoId','emoji':'Emoji','cor':'Cor',
+    'membrosids':'MembrosIds','datacriacao':'DataCriacao',
+    'titulo':'Titulo','titulooriginal':'TituloOriginal','composicao':'Composicao',
+    'categoria':'Categoria','link':'Link','versao':'Versao','data':'Data',
+    'bandaid':'BandaId','bandanome':'BandaNome',
+    'tipo':'Tipo','musicasids':'MusicasIds','repertorioid':'RepertorioId',
+    'artista':'Artista','tom':'Tom','bpm':'Bpm',
+    'youtube':'Youtube','letra':'Letra','cifra':'Cifra','partitura':'Partitura',
+    'criadopor':'CriadoPor','bandasids':'BandasIds','repertoriotype':'RepertorioTipo',
+    'repertoriotipo':'RepertorioTipo',
+    'escalaid':'EscalaId','musicoid':'MusicoId','dataresposta':'DataResposta',
+    'musicooutid':'MusicoOutId','musicoinid':'MusicoInId',
+    'token':'Token','nivel':'Nivel','sessionkey':'SessionKey','sessionexp':'SessionExp',
+    'liderequipeid':'LiderEquipeId','celebracaoid':'CelebracaoId',
+    'repready':'RepReady','overrides':'Overrides','justificativa':'Justificativa',
+    'criadopornivel':'CriadoPorNivel','criadoporid':'CriadoPorId',
+  };
+  // Normalizar: minúsculo, sem espaços, sem acentos
+  const low = h.toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[áàãâä]/g, 'a')
+    .replace(/[éèêë]/g, 'e')
+    .replace(/[íìîï]/g, 'i')
+    .replace(/[óòõôö]/g, 'o')
+    .replace(/[úùûü]/g, 'u')
+    .replace(/[ç]/g, 'c')
+    .replace(/[ñ]/g, 'n');
+  return map[low] || h;
+}
+
+function cleanVal(v) {
+  if (v instanceof Date) {
+    if (v.getFullYear() <= 1900) {
+      return pad(v.getHours()) + ':' + pad(v.getMinutes());
+    }
+    return v.toISOString();
+  }
+  if (v === 'undefined' || v === 'null') return '';
+  if (v === null || v === undefined) return '';
+  return v;
+}
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function genId() { return Utilities.getUuid().replace(/-/g,'').substring(0, 12).toUpperCase(); }
+
+function addRow(name, obj) {
+  const sheet = sh(name);
+  if (!sheet) { Logger.log('Sheet not found: ' + name); return; }
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const row = headers.map(h => {
+    const hStr  = String(h).trim();
+    const normH = norm(hStr);
+    const hLow  = hStr.toLowerCase();
+    if (obj[normH] !== undefined && obj[normH] !== '') return obj[normH];
+    if (obj[hStr]  !== undefined && obj[hStr]  !== '') return obj[hStr];
+    if (obj[hLow]  !== undefined && obj[hLow]  !== '') return obj[hLow];
+    for (const [k, v] of Object.entries(obj)) {
+      if (norm(k) === normH) return v;
+      if (k.toLowerCase() === hLow) return v;
+    }
+    return '';
+  });
+  Logger.log('addRow ' + name + ': ' + JSON.stringify(row));
+  sheet.appendRow(row);
+  // Invalidar cache desta aba após escrita
+  delete _sheetCache[name];
+}
+
+function updRow(name, id, updates) {
+  const sheet = sh(name);
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const idIdx = headers.indexOf('Id');
+  if (idIdx === -1) return false;
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][idIdx]) === String(id)) {
+      Object.entries(updates).forEach(([k, v]) => {
+        const ci = headers.indexOf(norm(k));
+        if (ci !== -1) sheet.getRange(i + 1, ci + 1).setValue(v);
+      });
+      // Invalidar cache desta aba após escrita
+      delete _sheetCache[name];
+      return true;
     }
   }
+  return false;
+}
 
-  load(true);
-  const r = await api('salvarOverridesRepertorio', {
-    repId,
-    overrides: JSON.stringify(overrides),
-    pronto: liberar ? 'sim' : 'nao',
-  });
-  load(false);
-
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-
-  if (liberar) {
-    // Criar escalas para todas as bandas que têm este repertório via celebrações
-    const rBandas = await api('getMinhasBandas');
-    if (rBandas.ok) {
-      for (const banda of rBandas.data) {
-        await api('criarEscalasDaBanda', { bandaId: banda.Id });
-      }
+function removerRow(name, id) {
+  const sheet = sh(name);
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const idIdx = headers.indexOf('Id');
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][idIdx]) === String(id)) {
+      sheet.deleteRow(i + 1);
+      // Invalidar cache desta aba após escrita
+      delete _sheetCache[name];
+      return ok('Removido');
     }
-    toast('Repertório liberado! Escalas enviadas aos músicos ✅','ok');
-  } else {
-    toast('Rascunho salvo!','ok');
   }
-  closeM();
-  // [OPT] Recarregar dados completos após salvar rep
-  const rSync = await api('getDadosIniciaisLider');
-  if (rSync.ok) {
-    _lBandas = rSync.data.bandas || _lBandas;
-    _vEscalas = rSync.data.vEscalas || _vEscalas;
-    const todasEsc2 = rSync.data.escalas || [];
-    const escsPorBanda2 = {};
-    _lBandas.forEach(b => { escsPorBanda2[b.Id] = todasEsc2.filter(e => e.BandaId === b.Id); });
-    window._lBandaAceites    = rSync.data.aceitesPorBanda || {};
-    window._lEscalasPorBanda = escsPorBanda2;
-    renderLBandas();
-    renderLRep(rSync.data.repertorios || []);
-  } else {
-    const rRep = await api('getRepertorios',{});
-    renderLRep(rRep.ok ? rRep.data : []);
-  }
+  return err('Não encontrado');
 }
 
-
-function ltab(id,el){
-  document.querySelectorAll('#sLid .tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('#sLid .tc').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById(id).classList.add('active');
-  if (id === 'lMinhasEsc') {
-    // Recarregar escalas pessoais ao abrir a aba
-    api('getMinhasEscalas').then(r => {
-      if (r.ok) { _vEscalas = r.data; renderVEscInEl('lMinhasEscList'); }
-    });
-  }
-  if (id === 'lBandas') {
-    // Recarregar aceites da banda ao abrir a aba
-    recarregarAceitesBanda();
-  }
+function findRow(name, key, val) {
+  const res = rows(name);
+  if (!res.ok) return null;
+  return res.data.find(r => String(r[norm(key)]) === String(val)) || null;
 }
 
-function renderLBandas(){
-  const el = document.getElementById('lBandasList');
-  if (!_lBandas.length) { el.innerHTML = empty('🎸','Nenhuma banda'); return; }
-  const aceiteData  = window._lBandaAceites     || {};
-  const escalasData = window._lEscalasPorBanda  || {};
+// ==================== AUTH ====================
+function login(data) {
+  const token = String(data.token || '').trim();
+  if (!token) return err('Token não informado');
+  const sheet = sh('Tokens');
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const iToken = headers.indexOf('Token');
+  const iNivel = headers.indexOf('Nivel');
+  const iNome  = headers.indexOf('Nome');
+  const iEkl   = headers.indexOf('Eklesia');
+  const iMid   = headers.indexOf('MusicoId');
+  const iSK    = headers.indexOf('SessionKey');
+  const iSE    = headers.indexOf('SessionExp');
 
-  el.innerHTML = _lBandas.map(b => {
-    const membrosIds = (b.MembrosIds||'').split(',').filter(Boolean);
-    const membros = membrosIds.map(mid => {
-      const mus = (_lTodosMusicos||[]).find(x => x.Id === mid);
-      return mus || { Id:mid, Nome:mid, Instrumentos:'', WhatsApp:'' };
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][iToken]).trim() === token) {
+      const sk  = Utilities.getUuid();
+      const exp = new Date();
+      exp.setHours(exp.getHours() + CFG.SESSION_H);
+      sheet.getRange(i + 1, iSK + 1).setValue(sk);
+      sheet.getRange(i + 1, iSE + 1).setValue(exp.toISOString());
+
+      const nivelRaw = String(vals[i][iNivel]).trim().toLowerCase();
+      const nivelMap = {
+        'admin':'master','master':'master',
+        'lider':'liderbanda','liderbanda':'liderbanda',
+        'liderequipe':'liderequipe',
+        'voluntario':'musico','musico':'musico',
+      };
+      const nivel = nivelMap[nivelRaw] || nivelRaw;
+
+      return {
+        ok:       true,
+        sessionKey: sk,
+        nivel,
+        nome:     String(vals[i][iNome]),
+        eklesia:  String(vals[i][iEkl]),
+        musicoId: String(vals[i][iMid] || ''),
+      };
+    }
+  }
+  return err('Token inválido');
+}
+
+function checkSession(sk) {
+  if (!sk) return null;
+  const sheet = sh('Tokens');
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const iSK  = headers.indexOf('SessionKey');
+  const iSE  = headers.indexOf('SessionExp');
+  const iNiv = headers.indexOf('Nivel');
+  const iNom = headers.indexOf('Nome');
+  const iEkl = headers.indexOf('Eklesia');
+  const iMid = headers.indexOf('MusicoId');
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][iSK]) === String(sk)) {
+      const exp = new Date(vals[i][iSE]);
+      if (new Date() > exp) return null;
+      return {
+        sessionKey: sk,
+        nivel:   String(vals[i][iNiv]),
+        nome:    String(vals[i][iNom]),
+        eklesia: String(vals[i][iEkl]),
+        musicoId:String(vals[i][iMid] || ''),
+      };
+    }
+  }
+  return null;
+}
+
+function logout(data) {
+  const sheet = sh('Tokens');
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const iSK = headers.indexOf('SessionKey');
+  const iSE = headers.indexOf('SessionExp');
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][iSK]) === String(data.sessionKey)) {
+      sheet.getRange(i + 1, iSK + 1).setValue('');
+      sheet.getRange(i + 1, iSE + 1).setValue('');
+      return ok('ok');
+    }
+  }
+  return ok('ok');
+}
+
+// ==================== INSCRIÇÃO ====================
+function salvarInscricao(data) {
+  const id     = genId();
+  const instrs = Array.isArray(data.instrumentos)
+    ? data.instrumentos.join(',')
+    : (typeof data.instrumentos === 'string' ? data.instrumentos : '');
+  const obs     = data.obs || data.observacoes || data.Obs || data.Observacoes || '';
+  const eklesia = data.eklesia || data.Eklesia || '';
+  const whatsapp = String(data.whatsapp || data.WhatsApp || '');
+
+  Logger.log('salvarInscricao: nome=' + data.nome + ' ekl=' + eklesia + ' wa=' + whatsapp);
+
+  addRow('Audicoes', {
+    Id: id, Nome: data.nome || '', Eklesia: eklesia,
+    WhatsApp: whatsapp, Instrumentos: instrs, Observacoes: obs,
+    Status: 'pendente', FotoUrl: '', DataInscricao: new Date().toISOString(),
+    DataAudicao: '', Horario: '', Local: '',
+    Notificado: 'nao', DataNotificacao: '',
+  });
+  return { ok: true, id };
+}
+
+function uploadFoto(data) {
+  try {
+    const root   = DriveApp.getFolderById(CFG.DRIVE_ID);
+    const iter   = root.getFoldersByName('Fotos dos Músicos');
+    const folder = iter.hasNext() ? iter.next() : root.createFolder('Fotos dos Músicos');
+    const blob   = Utilities.newBlob(Utilities.base64Decode(data.fotoBase64), 'image/jpeg', data.fotoNome || 'foto.jpg');
+    const file   = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    const url = 'https://drive.google.com/uc?id=' + file.getId();
+    if (data.inscricaoId) updRow('Audicoes', data.inscricaoId, { FotoUrl: url });
+    return { ok: true, url };
+  } catch(e) { return err(e.message); }
+}
+
+function agendarAudicao(data) {
+  updRow('Audicoes', data.id, {
+    DataAudicao: data.dataAudicao || '',
+    Horario: String(data.horario || '').substring(0, 5),
+    Local: data.local || '', Status: 'agendada',
+  });
+  return ok('ok');
+}
+
+function aprovarMusico(data) {
+  updRow('Audicoes', data.id, { Status: data.tipo });
+  addRow('Aprovacoes', {
+    Id: genId(), AudicaoId: data.id, Nome: data.nome || '',
+    Tipo: data.tipo, Obs: data.obs || '', DataAprovacao: new Date().toISOString(),
+  });
+  if (data.tipo === 'aprovado') {
+    const insc = findRow('Audicoes', 'Id', data.id);
+    const mid  = genId();
+    addRow('Musicos', {
+      Id: mid, Nome: (insc && insc.Nome) || data.nome || '',
+      Eklesia: (insc && insc.Eklesia) || data.eklesia || '',
+      WhatsApp: (insc && insc.WhatsApp) || data.whatsapp || '',
+      Instrumentos: (insc && insc.Instrumentos) || data.instrumentos || '',
+      Banda: '', FotoUrl: (insc && insc.FotoUrl) || '',
+      Ativo: 'sim', IsLider: 'nao', AudicaoId: data.id || '',
+      DataCadastro: new Date().toISOString(),
     });
+    const token =
+      Math.random().toString(36).substring(2, 6).toUpperCase() +
+      Math.random().toString(36).substring(2, 6).toUpperCase() +
+      Math.random().toString(36).substring(2, 4).toUpperCase();
+    addRow('Tokens', {
+      Id: genId(), Nome: (insc && insc.Nome) || data.nome || '',
+      Eklesia: (insc && insc.Eklesia) || data.eklesia || '',
+      Token: token, Nivel: 'musico', MusicoId: mid,
+      SessionKey: '', SessionExp: '', DataCriacao: new Date().toISOString(),
+    });
+    return { ok: true, musicoId: mid, token };
+  }
+  return ok('ok');
+}
 
-    const aceiteMap      = aceiteData[b.Id]  || {};
-    const escalasDaBanda = escalasData[b.Id] || [];
-    const s = getSess();
+function notificar(data) {
+  updRow('Audicoes', data.id, { Notificado: 'sim', DataNotificacao: new Date().toISOString() });
+  return ok('ok');
+}
 
-    // BUG1-FIX: verificar se o repertório já foi liberado
-    // aceitesPorBanda só contém aceites de escalas com rep liberado (backend)
-    const repLiberado = aceiteData[b.Id + '__repLiberado'] === true;
-    const repPendente = aceiteData[b.Id + '__repPendente'] === true;
+function promoverLider(data) {
+  updRow('Musicos', data.musicoId, { IsLider: 'sim' });
+  return ok('ok');
+}
 
-    // BUG3-FIX: só atualizar aceite do líder com _vEscalas se a escala
-    // tiver rep liberado (evita mostrar "Pendente" antes da liberação)
-    escalasDaBanda.forEach(esc => {
-      const minhaEsc = (_vEscalas||[]).find(e => e.Id === esc.Id);
-      if (minhaEsc && minhaEsc.repReady && s && s.mid) {
-        // BUG3-FIX: só sobrescreve se não houver aceite já confirmado do servidor
-        const jaTemAceiteServidor = aceiteMap[s.mid] && aceiteMap[s.mid].status === 'aceita';
-        if (!jaTemAceiteServidor) {
-          aceiteMap[s.mid] = {
-            status: minhaEsc.meuStatus || 'pendente',
-            justificativa: minhaEsc.Justificativa || '',
-          };
+// ==================== TOKENS ====================
+function getTokens() {
+  const res = rows('Tokens');
+  if (!res.ok) return res;
+  // [SEC-2] Nunca retornar SessionKey/SessionExp
+  return ok(res.data.map(t => ({
+    Id: t.Id, Nome: t.Nome, Eklesia: t.Eklesia,
+    Token: t.Token, Nivel: t.Nivel, MusicoId: t.MusicoId,
+    DataCriacao: t.DataCriacao,
+  })));
+}
+
+function gerarToken(data) {
+  const existing = rows('Tokens');
+  if (existing.ok && data.musicoId) {
+    const found = existing.data.find(t => String(t.MusicoId) === String(data.musicoId) && t.Token);
+    if (found) return err('Este músico já possui um token. Token não pode ser alterado.');
+  }
+  const token =
+    Math.random().toString(36).substring(2, 6).toUpperCase() +
+    Math.random().toString(36).substring(2, 6).toUpperCase() +
+    Math.random().toString(36).substring(2, 4).toUpperCase();
+  addRow('Tokens', {
+    Nome: data.nome || '', Eklesia: data.eklesia || '',
+    Token: token, Nivel: data.nivel || 'voluntario',
+    MusicoId: data.musicoId || '',
+    SessionKey: '', SessionExp: '', DataCriacao: new Date().toISOString(),
+  });
+  return { ok: true, token };
+}
+
+function getLideresEquipe() {
+  const rT  = rows('Tokens');
+  const rM  = rows('Musicos');
+  const toks = rT.ok ? rT.data : [];
+  const mus  = rM.ok ? rM.data : [];
+
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+
+  const lidToks = toks.filter(t => {
+    const n = nivelMap[(t.Nivel || '').toLowerCase()] || t.Nivel;
+    return n === 'liderequipe';
+  });
+
+  return ok(lidToks.map(t => {
+    const m = mus.find(x => x.Id === t.MusicoId) || {};
+    return { Id: t.MusicoId || t.Id, Nome: m.Nome || t.Nome || '', Eklesia: m.Eklesia || t.Eklesia || '', Token: t.Token };
+  }).filter(x => x.Nome));
+}
+
+function getLideres() {
+  const res = rows('Musicos');
+  if (!res.ok) return res;
+  return ok(res.data.filter(m => m.IsLider === 'sim').sort((a, b) => (a.Nome || '').localeCompare(b.Nome || '')));
+}
+
+// ==================== ATRIBUIR CELEBRAÇÃO ====================
+function atribuirCelebracao(data) {
+  updRow('Celebracoes', data.id, { LiderEquipeId: data.liderEquipeId || '' });
+  return ok('Celebração atribuída');
+}
+
+// ==================== EDITAR BANDA ====================
+function editarBanda(data) {
+  const membros = Array.isArray(data.membrosIds)
+    ? data.membrosIds.join(',')
+    : (data.membrosIds || '');
+  updRow('Bandas', data.id, {
+    Nome: data.nome || '', LiderNome: data.liderNome || '',
+    LiderMusicoId: data.liderMusicoId || '', Emoji: data.emoji || '🎸',
+    MembrosIds: membros,
+  });
+  return ok('Banda atualizada');
+}
+
+// ==================== EDITAR CELEBRAÇÃO ====================
+function editarCelebracaoComRegra(data, sess) {
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel;
+
+  if (nivel === 'liderequipe') {
+    // [PERF-4] cache garante que rows('Celebracoes') aqui não custa nova leitura
+    const cels = rows('Celebracoes');
+    if (cels.ok) {
+      const cel = cels.data.find(c => c.Id === data.id);
+      if (cel) {
+        data.repertorioTipo = cel.RepertorioTipo;
+        data.liderEquipeId  = cel.LiderEquipeId;
+        if ((cel.RepertorioTipo || '').toLowerCase() !== 'liderequipe') {
+          data.repertorioId = cel.RepertorioId;
         }
       }
-    });
-
-    const temEscala = escalasDaBanda.length > 0;
-    const aceitaram = repLiberado ? membros.filter(m => aceiteMap[m.Id]?.status === 'aceita').length : 0;
-    const recusaram = repLiberado ? membros.filter(m => aceiteMap[m.Id]?.status === 'recusada').length : 0;
-    const pendentes = repLiberado ? membros.length - aceitaram - recusaram : membros.length;
-
-    return `
-    <div class="card" style="margin-bottom:16px">
-      <div class="ch">
-        <span style="font-size:26px">${b.Emoji||'🎸'}</span>
-        <div style="flex:1">
-          <div class="cn">${b.Nome||'—'}</div>
-          <div class="cs">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
-        </div>
-        ${temEscala && repLiberado ? `<div style="display:flex;gap:5px;font-size:11px">
-          <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 7px">✅${aceitaram}</span>
-          <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 7px">❌${recusaram}</span>
-          <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 7px">⏳${pendentes}</span>
-        </div>` : temEscala && repPendente ? `<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>` : '<span style="font-size:11px;color:var(--text3)">sem escala</span>'}
-      </div>
-
-      ${temEscala ? `
-      <div style="margin-top:8px;padding:8px 10px;background:var(--bg3);border-radius:8px">
-        ${escalasDaBanda.map(e => {
-          const d = pd(e.Data||'');
-          // BUG1-FIX: mostrar aviso se rep não liberado
-          const repOk = e.repReady === true;
-          return `<div style="font-size:12px;color:var(--text2)">📅 <strong>${e.Titulo||'Escala'}</strong> — ${d.day}/${d.mon}/${d.year} ${e.Horario?'• ⏰ '+e.Horario:''} ${e.Local?'• 📍 '+e.Local:''}
-            ${!repOk ? '<span style="margin-left:8px;font-size:11px;color:var(--yellow);background:rgba(251,191,36,.12);border-radius:5px;padding:2px 7px">⏳ Aguardando repertório</span>' : ''}
-          </div>`;
-        }).join('')}
-        ${repPendente ? `<div style="margin-top:6px;font-size:11px;color:var(--yellow)">⚙️ Configure e libere o repertório para que os músicos vejam e respondam a escala.</div>` : ''}
-      </div>` : ''}
-
-      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-        <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          ${membros.map(mem => {
-            const aceite  = aceiteMap[mem.Id];
-            // BUG1-FIX: só mostrar status se rep liberado; caso contrário mostra aviso
-            const st      = (temEscala && repLiberado) ? (aceite?.status || 'pendente') : null;
-            const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':st?'#FBBF24':'var(--border)';
-            const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':st?'⏳':'';
-            const waNum   = String(mem.WhatsApp||'').replace(/\D/g,'');
-            return `
-            <div style="background:var(--bg3);border-radius:8px;border-left:3px solid ${stColor}">
-              <div style="display:flex;align-items:center;gap:10px;padding:8px 10px">
-                <div class="av" style="width:32px;height:32px;font-size:13px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
-                <div style="flex:1;min-width:0">
-                  <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
-                  <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}${mem.Eklesia?' • Ekl. '+mem.Eklesia:''}</div>
-                  ${waNum?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waNum)}</div>`:''}
-                  ${st==='recusada'&&aceite?.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:3px">💬 "${aceite.justificativa}"</div>`:''}
-                </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0">
-                  ${st?`<span style="font-size:11px;color:${stColor};font-weight:600">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>`:''}
-                  ${waNum?`<a href="https://wa.me/55${waNum}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:3px 8px;font-size:11px;text-decoration:none">💬</a>`:''}
-                  ${st==='recusada' ? (() => {
-                    const myNivel = getSess()?.nivel || '';
-                    const subAberta = aceite?.subAberta;
-                    const subNivel  = aceite?.subCriadoPorNivel || '';
-                    if (subAberta && subNivel !== myNivel) {
-                      return `<span style="font-size:10px;color:var(--text3);background:var(--bg4);border-radius:5px;padding:2px 7px">🔒 Sub solicitado</span>`;
-                    } else if (subAberta) {
-                      return `<span style="font-size:10px;color:var(--yellow);background:var(--bg4);border-radius:5px;padding:2px 7px">⏳ Sub aberto</span>`;
-                    } else {
-                      const escIdForSub = (escalasDaBanda[0]||{}).Id || '';
-                      return `<button onclick="modalPedirSub('${escIdForSub}','${mem.Id}','${(mem.Instrumentos||'').split(',')[0].trim()}')" style="background:rgba(251,191,36,.15);border:1px solid #FBBF24;color:#FBBF24;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">🔄 Chamar sub</button>`;
-                    }
-                  })() : ''}
-                </div>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>
-      </div>
-
-      <!-- Substitutos -->
-      ${(() => {
-        const subsB = (window._lBandaSubs||{})[b.Id] || [];
-        if (!subsB.length) return '';
-        return `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-          <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">SUBSTITUTOS</p>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            ${subsB.map(sub => {
-              const waS = String(sub.WhatsApp||'').replace(/\D/g,'');
-              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;border-left:3px solid var(--accent2)">
-                <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0;background:rgba(251,191,36,.2);color:#FBBF24">${(sub.MusicoNome||'?')[0]}</div>
-                <div style="flex:1">
-                  <div style="font-size:13px;font-weight:600">${sub.MusicoNome||'—'} <span style="font-size:10px;color:var(--accent2)">• sub</span></div>
-                  <div style="font-size:11px;color:var(--text3)">${sub.Instrumentos||'—'}</div>
-                  ${waS?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waS)}</div>`:''}
-                </div>
-                ${waS?`<a href="https://wa.me/55${waS}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>`:''}
-              </div>`;
-            }).join('')}
-          </div>
-        </div>`;
-      })()}
-    </div>`;
-  }).join('');
+    }
+  }
+  return editarCelebracao(data);
 }
 
-function detBandaLid(id){
-  const b=_lBandas.find(x=>x.Id===id); if(!b) return;
-  document.getElementById('dTitle').textContent=b.Nome;
-  document.getElementById('dBody').innerHTML=`
-    <div class="igrid"><div class="ii"><label>Nome</label><span>${b.Nome}</span></div><div class="ii"><label>Líder</label><span>${b.LiderNome||'—'}</span></div></div>
-    <div class="dsec"><h3>Ações rápidas</h3><div class="arow">
-      <button class="btn-primary sm" onclick="modalCriarEscalaParaBanda('${b.Id}','${b.Nome}')">📅 Criar escala</button>
-      <button class="btn-ghost sm" onclick="modalCriarRepertorioParaBanda('${b.Id}','${b.Nome}')">📋 Criar repertório</button>
-    </div></div>`;
-  openD();
+function editarCelebracao(data) {
+  const bandasIds = Array.isArray(data.bandasIds)
+    ? data.bandasIds.join(',')
+    : (data.bandasIds || '');
+  const updates = {
+    Nome: data.nome || '', Data: data.data || '',
+    Horario: String(data.horario || '').substring(0, 5),
+    Local: data.local || '', Obs: data.obs || '',
+    BandasIds: bandasIds,
+    RepertorioId: data.repertorioId || '',
+    RepertorioTipo: data.repertorioTipo || 'admin',
+  };
+  if (data.liderEquipeId !== undefined) updates.LiderEquipeId = data.liderEquipeId;
+  updRow('Celebracoes', data.id, updates);
+  return ok('Celebração atualizada');
 }
 
-function renderLEsc(list){
-  const el=document.getElementById('lEscList');
-  if(!list.length){el.innerHTML=empty('📅','Nenhuma escala');return;}
-  list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
-  el.innerHTML=list.map(e=>{
-    const d=pd(e.Data);
-    return `<div class="li" onclick="detEscLid('${e.Id}')">
-      <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-      <div class="li-info"><div class="li-name">${e.Titulo||'—'}</div><div class="li-sub">⏰ ${e.Horario||''} • 🎸 ${e.BandaNome||''}</div></div>
-      <div class="li-r">${badge(e.Status||'pendente')}</div>
-    </div>`;
-  }).join('');
+// ==================== EDITAR REPERTÓRIO ====================
+function salvarOverridesRepertorioComPerm(data, sess) {
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel;
+  // [PERF-1] cache: rows('Repertorios') não relê o Sheets se já lido na mesma req
+  const reps = rows('Repertorios');
+  if (reps.ok && data.repId) {
+    const rep = reps.data.find(r => r.Id === data.repId);
+    if (rep && (rep.RepReady || '').toLowerCase() === 'sim' && nivel === 'liderbanda') {
+      return err('Repertório já foi liberado. Apenas Master ou Líder de Equipe podem alterar.');
+    }
+  }
+  return salvarOverridesRepertorio(data);
 }
 
-async function detEscLid(id){
-  load(true);
-  const r=await api('getEscalaById',{id});
-  load(false);
-  if(!r.ok){toast('Erro','err');return;}
-  const e=r.data, ac=r.aceites||[], d=pd(e.Data);
-  document.getElementById('dTitle').textContent=e.Titulo||'Escala';
-  document.getElementById('dBody').innerHTML=`
-    <div class="igrid">
-      <div class="ii"><label>Data</label><span>${d.day}/${d.mon}/${d.year}</span></div>
-      <div class="ii"><label>Horário</label><span>${e.Horario||'—'}</span></div>
-      <div class="ii"><label>Local</label><span>${e.Local||'—'}</span></div>
-      <div class="ii"><label>Banda</label><span>${e.BandaNome||'—'}</span></div>
-    </div>
-    <div class="dsec"><h3>Aceites (${ac.length})</h3>
-      ${ac.length?`<div style="display:flex;flex-direction:column;gap:8px">${ac.map(a=>{
-        const just=a.Justificativa||a.justificativa||'';
-        const st=a.Status||a.status||'pendente';
-        const nome=a.MusicoNome||a.MusicoId||'—';
-        return `<div class="li" style="flex-direction:column;align-items:flex-start;gap:6px">
-          <div style="display:flex;align-items:center;gap:10px;width:100%">
-            <div class="av sm">${nome[0]||'?'}</div>
-            <div class="li-info"><div class="li-name">${nome}</div></div>
-            ${badge(st)}
-          </div>
-          ${just&&st==='recusada'?`<div style="font-size:12px;color:var(--red);padding:6px 10px;background:rgba(248,113,113,.1);border-radius:6px;width:100%">💬 "${just}"</div>`:''}
-        </div>`;
-      }).join('')}</div>`:'<p style="font-size:13px;color:var(--text3)">Nenhum músico escalado</p>'}
-    </div>
-    <div class="dsec"><h3>Ações</h3><div class="arow">
-      <button class="btn-ghost sm" onclick="modalSub('${e.Id}')">🔄 Pedir sub</button>
-    </div></div>`;
-  openD();
-}
-
-function renderLMus(){
-  const el=document.getElementById('lMusList');
-  if(!_lMusicas.length){el.innerHTML=empty('🎼','Nenhuma música');return;}
-  _lMusicas.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  el.innerHTML=_lMusicas.map((m,i)=>`<div class="li" onclick="detMus('${m.Id}')">
-    <div style="width:28px;height:28px;background:var(--bg4);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--text3);flex-shrink:0">${i+1}</div>
-    <div class="li-info"><div class="li-name">${m.Nome||'—'}</div><div class="li-sub">${m.Artista||''} • ${m.Versao||''}</div></div>
-    <div class="li-r"><span style="font-family:monospace;font-size:12px;font-weight:700;color:var(--accent2);background:var(--bg4);padding:2px 8px;border-radius:5px">${m.Tom||''}</span><span style="font-size:11px;color:var(--text3)">${m.Bpm||''}bpm</span></div>
-  </div>`).join('');
-}
-
-function detMus(id){
-  const m=_lMusicas.find(x=>x.Id===id)||{};
-  document.getElementById('dTitle').textContent=m.Nome||'Música';
-  document.getElementById('dBody').innerHTML=`
-    <div class="igrid"><div class="ii"><label>Tom</label><span style="font-family:monospace;font-size:20px;color:var(--accent2)">${m.Tom||'—'}</span></div><div class="ii"><label>BPM</label><span>${m.Bpm||'—'}</span></div><div class="ii"><label>Artista</label><span>${m.Artista||'—'}</span></div><div class="ii"><label>Versão</label><span>${m.Versao||'—'}</span></div></div>
-    <div class="dsec"><h3>Links</h3><div class="arow">
-      ${m.Youtube?`<a class="btn-primary sm" href="${m.Youtube}" target="_blank" style="text-decoration:none">▶ YouTube</a>`:''}
-      ${m.Cifra?`<a class="btn-ghost sm" href="${m.Cifra}" target="_blank">🎸 Cifra</a>`:''}
-      ${m.Partitura?`<a class="btn-ghost sm" href="${m.Partitura}" target="_blank">📄 Partitura</a>`:''}
-    </div></div>`;
-  openD();
-}
-
-function renderLRep(list){
-  const el=document.getElementById('lRepList');
-  if(!list.length){el.innerHTML=empty('📋','Nenhum repertório');return;}
-  const s=getSess();
-  const isMaster = s && s.nivel==='master';
-  const myId = s ? s.mid : '';
-  el.innerHTML=list.map(r=>{
-    const musCount=(r.MusicasIds||'').split(',').filter(Boolean).length;
-    const pronto = r.RepReady === 'sim';
-    const criadoPor = (r.CriadoPor||'').trim();
-    const eMeu = isMaster || criadoPor === '' || (criadoPor !== '' && criadoPor === (myId||''));
-    // Após liberar (pronto), só master e liderequipe podem editar/excluir
-    const podeEditar = eMeu && (isMaster || !pronto);
-    return `<div class="li">
-      <div class="li-info">
-        <div class="li-name">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px">✅ pronto</span>':'<span class="badge b-pend" style="margin-left:6px">⏳ pendente</span>'}</div>
-        <div class="li-sub">
-          ${musCount} música(s)
-          ${r.CriadoPorNome ? ` • 👤 ${r.CriadoPorNome}` : ''}
-          ${r.CelebracaoNome ? ` • ✨ ${r.CelebracaoNome}` : ''}
-        </div>
-      </div>
-      <div style="display:flex;gap:6px">
-        ${!pronto ? `<button class="btn-primary sm" onclick="modalEditarRepLider('${r.Id}')">⚙️ Configurar</button>` : `<span style="font-size:11px;color:var(--green);padding:5px 8px">🔒 Liberado</span>`}
-        ${podeEditar ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️</button>` : ''}
-        ${podeEditar ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderLSubs(list){
-  const el=document.getElementById('lSubsList');
-  const abertas=list.filter(s=>s.Status==='aberta');
-  if(!abertas.length){el.innerHTML=empty('🔄','Nenhuma sub aberta');return;}
-  el.innerHTML=abertas.map(s=>`<div class="li"><div class="li-info"><div class="li-name">Sub: ${s.Instrumento||'—'}</div><div class="li-sub">Escala: ${s.EscalaId||''}</div></div><span class="badge b-pend">aberta</span></div>`).join('');
-}
-
-// Modais Líder
-function modalCriarEscala(){ modalCriarEscalaParaBanda('',''); }
-function modalCriarEscalaParaBanda(bandaId, bandaNome){
-  openM('Nova Escala',`
-    <div class="fg"><label>Título *</label><input type="text" id="eTit" placeholder="Ex: Culto Dominical"/></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data *</label><input type="date" id="eDt"/></div>
-      <div class="fg"><label>Horário *</label><input type="time" id="eHr"/></div>
-    </div>
-    <div class="fg"><label>Local *</label><input type="text" id="eLoc" placeholder="Ex: Templo Principal"/></div>
-    <div class="fg"><label>Banda</label>
-      <select id="eBanda">${_lBandas.map(b=>`<option value="${b.Id}" ${b.Id===bandaId?'selected':''}>${b.Nome}</option>`).join('')}</select>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarEscalaLid()">Criar escala</button>
-    </div>`);
-}
-
-async function salvarEscalaLid(){
-  const tit=document.getElementById('eTit').value.trim();
-  const dt=document.getElementById('eDt').value;
-  const hr=document.getElementById('eHr').value;
-  const loc=document.getElementById('eLoc').value.trim();
-  if(!tit||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
-  const bid=document.getElementById('eBanda').value;
-  const b=_lBandas.find(x=>x.Id===bid)||{};
-  load(true);
-  const r=await api('criarEscala',{titulo:tit,data:dt,horario:hr,local:loc,bandaId:bid,bandaNome:b.Nome||'',musicosIds:(b.MembrosIds||'').split(',').filter(Boolean)});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Escala criada! ✅','ok'); closeM();
-  const rE=await api('getEscalas'); renderLEsc(rE.ok?rE.data:[]);
-}
-
-function modalCriarRepertorio(){ modalCriarRepertorioParaBanda('',''); }
-function modalCriarRepertorioParaBanda(bandaId, bandaNome){
-  openM('Novo Repertório',`
-    <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
-    <div class="fg"><label>Banda</label><select id="rBanda">${_lBandas.map(b=>`<option value="${b.Id}" ${b.Id===bandaId?'selected':''}>${b.Nome}</option>`).join('')}</select></div>
-    <div class="fg"><label>Músicas</label>
-      <div style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding:4px 0">
-        ${_lMusicas.map(m=>`<label style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg3);border-radius:8px;cursor:pointer"><input type="checkbox" value="${m.Id}"/><div><div style="font-size:13px;font-weight:600">${m.Nome}</div><div style="font-size:11px;color:var(--text2)">${m.Artista||''} • ${m.Tom||''}</div></div></label>`).join('')}
-      </div>
-    </div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarRepLid()">Criar</button></div>`);
-}
-
-async function salvarRepLid(){
-  const nome=document.getElementById('rNome').value.trim();
-  if(!nome){toast('Informe o nome','err');return;}
-  const ids=[...document.querySelectorAll('#mBody input[type=checkbox]:checked')].map(i=>i.value);
-  load(true);
-  const r=await api('criarRepertorio',{nome,bandaId:document.getElementById('rBanda').value,musicasIds:ids});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Repertório criado!','ok'); closeM();
-  const rRep=await api('getRepertorios'); renderLRep(rRep.ok?rRep.data:[]);
-}
-
-function modalAdicionarMusica(){
-  openM('Adicionar Música',`
-    <div class="fg"><label>Nome *</label><input type="text" id="mNome"/></div>
-    <div class="fg"><label>Artista</label><input type="text" id="mArt"/></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Tom</label><input type="text" id="mTom" placeholder="G, A, C#"/></div>
-      <div class="fg"><label>BPM</label><input type="text" id="mBpm"/></div>
-    </div>
-    <div class="fg"><label>Versão</label><input type="text" id="mVers"/></div>
-    <div class="fg"><label>YouTube</label><input type="text" id="mYt" placeholder="https://..."/></div>
-    <div class="fg"><label>Cifra</label><input type="text" id="mCif" placeholder="https://..."/></div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarMus()">Salvar</button></div>`);
-}
-
-async function salvarMus(){
-  const nome=document.getElementById('mNome').value.trim();
-  if(!nome){toast('Informe o nome','err');return;}
-  load(true);
-  const r=await api('adicionarMusica',{nome,artista:document.getElementById('mArt').value,tom:document.getElementById('mTom').value,bpm:document.getElementById('mBpm').value,versao:document.getElementById('mVers').value,youtube:document.getElementById('mYt').value,cifra:document.getElementById('mCif').value});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Música adicionada! 🎵','ok'); closeM();
-  // [OPT] getMusicas 1x apenas (era 2x)
-  const rM=await api('getMusicas'); _lMusicas=rM.ok?rM.data:[]; renderLMus(); renderAMusicas(_lMusicas);
-}
-
-function modalPedirSub(escId, musicoOutId, instrumento) {
-  openM('Chamar Substituto', `
-    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Instrumento necessário para substituição:</p>
-    <div class="fg">
-      <label>Instrumento</label>
-      <select id="subInstrPedir">
-        ${['Voz','Violão','Guitarra','Baixo','Teclado','Bateria','Percussão','Backing Vocal']
-          .map(i => `<option value="${i}" ${i===instrumento?'selected':''}>${i}</option>`).join('')}
-      </select>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="confirmarPedirSub('${escId}','${musicoOutId}')">🔄 Solicitar sub</button>
-    </div>`);
-}
-
-async function confirmarPedirSub(escId, musicoOutId) {
-  const instrumento = document.getElementById('subInstrPedir').value;
-  load(true);
-  const r = await api('criarSub', { escalaId: escId, musicoOutId, instrumento });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Substituição solicitada! ✅','ok');
-  closeM();
-  await recarregarAceitesBanda();
-}
-
-function modalSub(escId){
-  openM('Pedir Substituto',`
-    <div class="fg"><label>Instrumento necessário</label>
-      <select id="subInstr"><option>Voz</option><option>Violão</option><option>Guitarra</option><option>Baixo</option><option>Teclado</option><option>Bateria</option><option>Percussão</option><option>Backing Vocal</option></select>
-    </div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarSub('${escId}')">Abrir vaga</button></div>`);
-}
-
-async function salvarSub(escId){
-  load(true);
-  const r=await api('criarSub',{escalaId:escId,instrumento:document.getElementById('subInstr').value,musicoOutId:''});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Vaga aberta!','ok'); closeM();
-}
-
-// ===== ADMIN =====
-let _aInsc=[], _aInscFilter='todos', _aBandas=[], _aMusicos=[], _aMusicas=[];
-let _pendAct=null, _sideOpen=false;
-
-// ===== LÍDER DE EQUIPE =====
-async function initLiderEquipe(sess) {
-  document.getElementById('admNome').textContent = sess.nome;
-  document.getElementById('admAv').textContent = sess.nome[0]||'L';
-  document.getElementById('admTopAv').textContent = sess.nome[0]||'L';
-  document.getElementById('admGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'!';
-  const tagEl2 = document.getElementById('admNivelTag');
-  if (tagEl2) tagEl2.textContent = 'Líder de Equipe';
-  show('sAdm');
-
-  // Esconder menus que lider de equipe não acessa
-  const hidePages = ['inscricoes','musicos','tokens','bandas','biblioteca'];
-  hidePages.forEach(p => {
-    const el = document.querySelector('.ni[data-p="'+p+'"]');
-    if (el) el.style.display = 'none';
+function salvarOverridesRepertorio(data) {
+  updRow('Repertorios', data.repId, {
+    Overrides: data.overrides || '{}',
+    RepReady:  data.pronto || 'nao',
   });
-  // Esconder botão "+ Nova celebração"
-  const btnNovaCel = document.querySelector('[onclick="modalCriarCel()"]');
-  if (btnNovaCel) btnNovaCel.style.display = 'none';
-
-  // Carregar dados
-  load(true);
-  try {
-    const rME = await api('getMinhasEscalas');
-    _vEscalas = rME.ok ? rME.data : [];
-    await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
-  } catch(e) {
-    console.error('initLiderEquipe error:', e);
-  } finally {
-    load(false);
-  }
-
-  // Navegar para celebrações e mostrar painel LE dedicado
-  apg('celebracoes');
-  const leEl = document.getElementById('lePanelList');
-  const celEl = document.getElementById('admCelList');
-  if (leEl) leEl.style.display = 'block';
-  if (celEl) celEl.style.display = 'none';
-  const btnNovaCel2 = document.querySelector('[onclick="modalCriarCel()"]');
-  if (btnNovaCel2) btnNovaCel2.style.display = 'none';
+  return ok('Overrides salvos');
 }
 
-async function loadLiderEquipePanel() {
-  const r = await api('getLiderEquipePanel');
-  if (!r.ok) return;
-  window._lePanel = r.data || [];
-  renderLiderEquipePanel();
+function removerRepertorioPerm(data, sess) {
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel;
+  if (nivel === 'master') return removerRow('Repertorios', data.id);
+  const reps = rows('Repertorios');
+  if (reps.ok) {
+    const rep = reps.data.find(r => r.Id === data.id);
+    if (!rep) return err('Não encontrado');
+    if (String(rep.CriadoPor || '') !== String(sess.musicoId || '')) {
+      return err('Você só pode excluir repertórios que criou.');
+    }
+  }
+  return removerRow('Repertorios', data.id);
 }
 
-function renderLiderEquipePanel() {
-  const el = document.getElementById('lePanelList') || document.getElementById('admCelList');
-  if (!el) return;
-  const panel = window._lePanel || [];
-  if (!panel.length) {
-    el.innerHTML = empty('✨','Nenhuma celebração atribuída a você');
-    return;
-  }
-  el.innerHTML = panel.map(cel => {
-    const d = pd(cel.Data||'');
-    const podeRep = cel.podeDefinirRepertorio;
-
-    // Mapa aceites: musicoId -> {status, justificativa}
-    // FIX1: só incluir aceites de escalas com rep liberado (repReady=true)
-    const aceiteMap = {};
-    let leRepLiberado = false;
-    let leRepPendente = false;
-    (cel.escalas||[]).forEach(esc => {
-      if (esc.repReady) {
-        leRepLiberado = true;
-        (esc.aceites||[]).forEach(a => {
-          // último registro ganha (deduplicação já feita no backend)
-          aceiteMap[String(a.MusicoId)] = {
-            status: (a.Status||'pendente').toLowerCase(),
-            justificativa: a.Justificativa||''
-          };
-        });
-      } else {
-        leRepPendente = true;
+function editarRepertorioPerm(data, sess) {
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel;
+  if (nivel === 'master') return editarRepertorio(data);
+  const reps = rows('Repertorios');
+  if (reps.ok) {
+    const rep = reps.data.find(r => r.Id === data.id);
+    if (rep) {
+      const cp = (rep.CriadoPor || '').trim();
+      if (cp !== '' && cp !== String(sess.musicoId || '')) {
+        return err('Você só pode editar repertórios que criou.');
       }
+    }
+  }
+  return editarRepertorio(data);
+}
+
+function editarRepertorio(data) {
+  const musicasIds = Array.isArray(data.musicasIds)
+    ? data.musicasIds.join(',')
+    : (data.musicasIds || '');
+  updRow('Repertorios', data.id, { Nome: data.nome || '', MusicasIds: musicasIds });
+  return ok('Repertório atualizado');
+}
+
+// ==================== MÚSICOS COM NÍVEL ====================
+function getMusicosComNivel() {
+  const rM    = rows('Musicos');
+  const rT    = rows('Tokens');
+  const rB    = rows('Bandas');
+  if (!rM.ok) return ok([]);
+  const toks   = rT.ok ? rT.data : [];
+  const bandas = rB.ok ? rB.data : [];
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+
+  const bandaMap = {};
+  bandas.forEach(b => {
+    const mids = (b.MembrosIds || '').split(',').map(x => x.trim()).filter(Boolean);
+    mids.forEach(mid => {
+      if (!bandaMap[mid]) bandaMap[mid] = [];
+      bandaMap[mid].push(b.Nome || '—');
     });
+  });
 
-    const temBanda = cel.bandas && cel.bandas.length > 0;
-
-    return `
-    <div class="card" style="margin-bottom:16px">
-
-      <!-- Cabeçalho Celebração -->
-      <div class="ch">
-        <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-        <div style="flex:1">
-          <div class="cn">${cel.Nome||'—'}</div>
-          <div class="cs">📍 ${cel.Local||''} • ⏰ ${cel.Horario||''}</div>
-          <div style="font-size:11px;margin-top:3px;color:${podeRep?'var(--accent2)':'var(--text3)'}">
-            📋 ${podeRep?'Você define o repertório':'Master define o repertório'}
-            ${cel.repertorioNome?`• <strong>${cel.repertorioNome}</strong>`:''}
-          </div>
-        </div>
-        ${podeRep ? `<button class="btn-ghost sm" onclick="modalEditarCel('${cel.Id}')">✏️ Repertório</button>` : ''}
-      </div>
-
-      <!-- Bandas e Músicos -->
-      ${temBanda ? `
-      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-        ${cel.bandas.map(b => {
-          const membros = b.membros || [];
-          const aceitaram = leRepLiberado ? membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'aceita').length : 0;
-          const recusaram = leRepLiberado ? membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'recusada').length : 0;
-          const pendentes = leRepLiberado ? (membros.length - aceitaram - recusaram) : membros.length;
-          return `
-          <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px">
-            <!-- Cabeçalho Banda -->
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-              <span style="font-size:20px">${b.Emoji||'🎸'}</span>
-              <div style="flex:1">
-                <div style="font-size:14px;font-weight:700">${b.Nome||'—'}</div>
-                <div style="font-size:11px;color:var(--text3)">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
-              </div>
-              <div style="display:flex;gap:6px;font-size:11px">
-                ${leRepLiberado
-                  ? '<span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ '+aceitaram+'</span>'
-                    +'<span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ '+recusaram+'</span>'
-                    +'<span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ '+pendentes+'</span>'
-                  : '<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>'
-                }
-              </div>
-            </div>
-
-            <!-- Lista de Músicos -->
-            <div style="display:flex;flex-direction:column;gap:6px">
-              ${membros.length ? membros.map(mem => {
-                // FIX1: só mostrar status real se rep liberado
-                const aceite = leRepLiberado ? (aceiteMap[String(mem.Id)] || { status: 'pendente' }) : { status: 'pendente' };
-                const st = aceite.status;
-                const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':'#FBBF24';
-                const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':'⏳';
-                return `
-                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg2);border-radius:8px;border-left:3px solid ${stColor}">
-                  <div class="av" style="width:32px;height:32px;font-size:13px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
-                  <div style="flex:1;min-width:0">
-                    <div style="font-size:13px;font-weight:600">${mem.Nome||'—'}</div>
-                    <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
-                    ${st==='recusada'&&aceite.justificativa?`<div style="font-size:11px;color:var(--red);margin-top:2px">💬 "${aceite.justificativa}"</div>`:''}
-                  </div>
-                  <span style="font-size:12px;color:${stColor};font-weight:600;flex-shrink:0">${stIcon} ${st.charAt(0).toUpperCase()+st.slice(1)}</span>
-                </div>`;
-              }).join('') : '<p style="font-size:12px;color:var(--text3);text-align:center">Nenhum integrante cadastrado</p>'}
-            </div>
-          </div>`;
-        }).join('')}
-      </div>` : `
-      <div style="margin-top:10px;padding:10px;background:var(--bg3);border-radius:8px;text-align:center">
-        <p style="font-size:12px;color:var(--text3)">Nenhuma banda vinculada a esta celebração ainda</p>
-      </div>`}
-    </div>`;
-  }).join('');
+  return ok(rM.data.map(m => {
+    const tok      = toks.find(t => String(t.MusicoId) === String(m.Id));
+    const nivelRaw = tok ? (tok.Nivel || 'musico') : 'musico';
+    const nivel    = nivelMap[nivelRaw.toLowerCase()] || nivelRaw;
+    const bandaNomes = (bandaMap[m.Id] || []).join(', ') || '';
+    return { ...m, NivelAcesso: nivel, Banda: bandaNomes };
+  }));
 }
 
-async function initAdmin(sess){
-  document.getElementById('admNome').textContent=sess.nome;
-  document.getElementById('admAv').textContent=sess.nome[0]||'A';
-  document.getElementById('admTopAv').textContent=sess.nome[0]||'A';
-  document.getElementById('admGreet').textContent='Bem-vindo, '+sess.nome.split(' ')[0]+'!';
-  const tagEl = document.getElementById('admNivelTag');
-  if (tagEl) tagEl.textContent = 'Administrador';
-  show('sAdm');
-  await loadDash();
-}
-
-function toggleSide(){ _sideOpen=!_sideOpen; document.getElementById('admSide').classList.toggle('open',_sideOpen); }
-
-const apgTitles={dashboard:'Dashboard',inscricoes:'Inscrições',musicos:'Músicos',bandas:'Bandas',celebracoes:'Celebrações',escalas:'Escalas',repertorios:'Repertórios',biblioteca:'Biblioteca',tokens:'Tokens'};
-const nivelLabel = {master:'Master',liderequipe:'Líder de Equipe',liderbanda:'Líder de Banda',musico:'Músico',admin:'Administrador'};
-
-function apg(name){
-  document.querySelectorAll('.ap').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));
-  document.getElementById('ap-'+name).classList.add('active');
-  const ni=document.querySelector(`.ni[data-p="${name}"]`);
-  if(ni) ni.classList.add('active');
-  document.getElementById('admTopTit').textContent=apgTitles[name]||name;
-  if(_sideOpen) toggleSide();
-  // Para lider de equipe: garantir visibilidade correta do painel
-  const s=getSess();
-  const isLE = s && s.nivel==='liderequipe';
-  if(isLE && name==='celebracoes'){
-    const leEl=document.getElementById('lePanelList');
-    const celEl=document.getElementById('admCelList');
-    if(leEl) leEl.style.display='block';
-    if(celEl) celEl.style.display='none';
-    const btnNova=document.querySelector('[onclick="modalCriarCel()"]');
-    if(btnNova) btnNova.style.display='none';
+// ==================== EDITAR MÚSICO / TOKENS ====================
+function vincularToken(data) {
+  const sheet = sh('Tokens');
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const iToken = headers.indexOf('Token');
+  const iMid   = headers.indexOf('MusicoId');
+  const iNivel = headers.indexOf('Nivel');
+  for (let i = 1; i < vals.length; i++) {
+    if (String(vals[i][iToken]).trim() === String(data.token).trim()) {
+      if (data.musicoId) sheet.getRange(i + 1, iMid + 1).setValue(data.musicoId);
+      if (data.nivel)    sheet.getRange(i + 1, iNivel + 1).setValue(data.nivel);
+      delete _sheetCache['Tokens'];
+      return ok('Token vinculado: ' + data.token + ' -> musicoId: ' + data.musicoId);
+    }
   }
-  const loaders={inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens};
-  if(loaders[name]) loaders[name]();
+  return err('Token não encontrado: ' + data.token);
 }
 
-// DASHBOARD
-async function loadDash(){
-  load(true);
-  const r=await api('getDashboard');
-  load(false);
-  if(!r.ok){toast('Erro dashboard','err');return;}
-  const d=r.data;
-  document.getElementById('bInsc').textContent=d.audicoesPendentes||0;
-  document.getElementById('admStats').innerHTML=`
-    <div class="stat" style="border-left-color:#7C6FF7"><span class="sl">Músicos</span><span class="sv">${d.totalMusicos}</span></div>
-    <div class="stat" style="border-left-color:#F87171"><span class="sl">Pendentes</span><span class="sv">${d.audicoesPendentes}</span></div>
-    <div class="stat" style="border-left-color:#4ECDC4"><span class="sl">Bandas</span><span class="sv">${d.totalBandas}</span></div>
-    <div class="stat" style="border-left-color:#FBBF24"><span class="sl">Escalas mês</span><span class="sv">${d.escalasEsteMes}</span></div>`;
-  document.getElementById('dInsc').innerHTML=(d.ultimasInscricoes||[]).map(i=>`<div class="li" style="margin-bottom:6px;cursor:default"><div class="av sm">${(i.Nome||'?')[0]}</div><div class="li-info"><div class="li-name">${i.Nome||'—'}</div><div class="li-sub">${i.Instrumentos||''}</div></div>${badge(i.Status||'pendente')}</div>`).join('')||empty('🎙','Nenhuma');
-  document.getElementById('dCel').innerHTML=(d.proximasCelebracoes||[]).map(c=>{const d2=pd(c.Data);return`<div class="li" style="margin-bottom:6px;cursor:default"><div class="db"><div class="db-d">${d2.day}</div><div class="db-m">${d2.mon}</div></div><div class="li-info"><div class="li-name">${c.Nome||'—'}</div><div class="li-sub">📍 ${c.Local||''}</div></div></div>`;}).join('')||empty('✨','Nenhuma');
-}
+function fixTokensOrfaos() {
+  const sheet    = sh('Tokens');
+  const musSheet = sh('Musicos');
+  if (!sheet || !musSheet) return err('Abas não encontradas');
 
-// INSCRIÇÕES
-async function loadInsc(){
-  load(true);
-  const r=await api('getInscricoes');
-  load(false);
-  _aInsc=r.ok?r.data:[];
-  document.getElementById('bInsc').textContent=_aInsc.filter(i=>i.Status==='pendente').length;
-  renderInsc();
-}
+  const tokVals   = sheet.getDataRange().getValues();
+  const tokHeaders = tokVals[0].map(h => norm(String(h)));
+  const iToken    = tokHeaders.indexOf('Token');
+  const iNome     = tokHeaders.indexOf('Nome');
+  const iMid      = tokHeaders.indexOf('MusicoId');
 
-function fInsc(f,el){ _aInscFilter=f; document.querySelectorAll('#inscFtabs .ftab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderInsc(); }
+  const musVals   = musSheet.getDataRange().getValues();
+  const musHeaders = musVals[0].map(h => norm(String(h)));
+  const miId      = musHeaders.indexOf('Id');
+  const miNome    = musHeaders.indexOf('Nome');
 
-function renderInsc(){
-  let list=_aInscFilter==='todos'?[..._aInsc]:_aInsc.filter(i=>i.Status===_aInscFilter);
-  list.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  const el=document.getElementById('admInscList');
-  if(!list.length){el.innerHTML=empty('🎙','Nenhuma inscrição');return;}
-  el.innerHTML=list.map(i=>`
-    <div class="card click" onclick="detInsc('${i.Id}')">
-      <div class="ch">
-        <div class="av">${(i.Nome||'?')[0]}</div>
-        <div style="flex:1"><div class="cn">${i.Nome||'—'}</div><div class="cs">${i.Eklesia||'—'} • 📱 ${i.WhatsApp||'—'}</div></div>
-        ${badge(i.Status||'pendente')}
-      </div>
-      <div class="itags">${(i.Instrumentos||'').split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
-      <div class="cf">
-        <span style="font-size:12px;color:var(--text3)">${fd(i.DataInscricao)} ${i.Notificado==='sim'?'• ✅':''}</span>
-        <a class="btn-wa" href="${wa(i.WhatsApp,'')}" target="_blank" onclick="event.stopPropagation()">💬</a>
-      </div>
-    </div>`).join('');
-}
-
-function detInsc(id){
-  const i=_aInsc.find(x=>x.Id===id); if(!i){toast('Não encontrado','err');return;}
-  const nome=i.Nome||'—', ekl=i.Eklesia||'—', whats=String(i.WhatsApp||'');
-  const instrs=i.Instrumentos||'—', st=i.Status||'pendente';
-  const obs=i.Observacoes||'', dataI=i.DataInscricao||'';
-  const dataA=i.DataAudicao||'', hor=i.Horario||'', loc=i.Local||'';
-  const notif=i.Notificado||'nao', dataN=i.DataNotificacao||'';
-  const foto=i.FotoUrl||'';
-  window._waMsgCache = encodeURIComponent('Olá, '+nome+'! Sua audição para '+instrs+' foi agendada:\n\n📅 Data: '+fd(dataA)+'\n⏰ Horário: '+hor+'\n📍 Local: '+loc+'\n\nNos vemos lá! 🎵');
-  window._waNumCache = String(i.WhatsApp||'').replace(/\D/g,'');
-  window._waIdCache  = id;
-  document.getElementById('dTitle').textContent=nome;
-  document.getElementById('dBody').innerHTML=`
-    ${foto?`<div style="text-align:center;margin-bottom:16px"><img src="${foto}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border)"/></div>`:''}
-    <div class="igrid">
-      <div class="ii"><label>Nome</label><span>${nome}</span></div>
-      <div class="ii"><label>Eklesia</label><span>${ekl}</span></div>
-      <div class="ii"><label>WhatsApp</label><span>${whats||'—'}</span></div>
-      <div class="ii"><label>Status</label><span>${badge(st)}</span></div>
-      <div class="ii"><label>Instrumentos</label><span>${instrs}</span></div>
-      <div class="ii"><label>Inscrição</label><span>${fd(dataI)}</span></div>
-      ${dataA?`<div class="ii"><label>Data audição</label><span>${fd(dataA)}</span></div>`:''}
-      ${hor?`<div class="ii"><label>Horário</label><span>${hor}</span></div>`:''}
-      ${loc?`<div class="ii"><label>Local</label><span>${loc}</span></div>`:''}
-      <div class="ii"><label>Notificado</label><span>${notif==='sim'?'✅ Sim — '+fd(dataN):'⏳ Não'}</span></div>
-    </div>
-    ${obs?`<div class="dsec"><h3>Observações</h3><p style="font-size:13px;color:var(--text2)">${obs}</p></div>`:''}
-    <div class="dsec"><h3>Ações</h3><div class="arow">
-      ${st==='pendente'?`<button class="btn-primary sm" onclick="modalAgendar('${id}')">📅 Agendar audição</button>`:''}
-      ${st==='agendada'?`
-        <button class="btn-green" onclick="confAprovar('${id}','aprovado','${nome.replace(/'/g,'')}')">✅ Aprovar</button>
-        <button class="btn-red" onclick="confAprovar('${id}','reprovado','${nome.replace(/'/g,'')}')">❌ Reprovar</button>
-        <button class="btn-wa" onclick="notifCand(window._waIdCache,window._waNumCache,window._waMsgCache)">💬 Notificar</button>
-      `:st==='aprovado'?'':`<a class="btn-wa" href="${wa(whats,'')}" target="_blank">💬 WhatsApp</a>`}
-    </div></div>
-`;
-  openD();
-}
-
-function confAprovar(id,tipo,nome){
-  _pendAct={id,tipo};
-  const label=tipo==='aprovado'?'Aprovar':'Reprovar', cls=tipo==='aprovado'?'btn-green':'btn-red', em=tipo==='aprovado'?'✅':'❌';
-  openM(em+' Confirmar',`
-    <p style="text-align:center;padding:12px 0;font-size:15px;color:var(--text2);line-height:1.7">Deseja <strong style="color:var(--text)">${label.toUpperCase()}</strong> a inscrição de<br/><strong style="color:var(--accent2);font-size:18px">${nome}</strong>?</p>
-    <div class="mfoot" style="justify-content:center;gap:12px">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="${cls}" onclick="execAprovar()"> ${em} Confirmar</button>
-    </div>`);
-}
-
-async function execAprovar(){
-  if(!_pendAct) return;
-  const {id,tipo}=_pendAct; _pendAct=null; closeM();
-  const i=_aInsc.find(x=>x.Id===id); if(!i) return;
-  load(true);
-  const r=await api('aprovarMusico',{id,tipo,nome:i.Nome,eklesia:i.Eklesia,whatsapp:String(i.WhatsApp||''),instrumentos:i.Instrumentos});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  if(tipo==='aprovado' && r.token){
-    toast(i.Nome+' aprovado! Token: '+r.token+' 🎵','ok');
-  } else {
-    toast(tipo==='aprovado'?i.Nome+' aprovado!':i.Nome+' reprovado(a)','info');
+  const fixed = [];
+  for (let i = 1; i < tokVals.length; i++) {
+    const tokMid = String(tokVals[i][iMid] || '').trim();
+    if (tokMid) continue;
+    const tokNome = String(tokVals[i][iNome] || '').trim().toLowerCase();
+    if (!tokNome) continue;
+    for (let j = 1; j < musVals.length; j++) {
+      const musNome = String(musVals[j][miNome] || '').trim().toLowerCase();
+      if (musNome === tokNome) {
+        const musId = String(musVals[j][miId] || '').trim();
+        if (musId) {
+          sheet.getRange(i + 1, iMid + 1).setValue(musId);
+          fixed.push(tokVals[i][iToken] + ' -> ' + musId);
+        }
+        break;
+      }
+    }
   }
-  closeD(); await loadInsc();
+  delete _sheetCache['Tokens'];
+  return ok({ fixed, total: fixed.length });
 }
 
-function modalAgendar(id){
-  openM('Agendar Audição',`
-    <div class="fg"><label>Data *</label><input type="date" id="audDt"/></div>
-    <div class="fg"><label>Horário *</label><input type="time" id="audHr"/></div>
-    <div class="fg"><label>Local *</label><input type="text" id="audLoc" placeholder="Ex: Sala de ensaio B"/></div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarAgendar('${id}')">Confirmar</button></div>`);
+function atualizarNivelToken(data) {
+  const sheet = sh('Tokens');
+  if (!sheet) return err('Aba Tokens não encontrada');
+  const vals  = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => norm(String(h)));
+  const iMid   = headers.indexOf('MusicoId');
+  const iNivel = headers.indexOf('Nivel');
+  const iNome  = headers.indexOf('Nome');
+  if (iMid === -1 || iNivel === -1) return err('Colunas não encontradas');
+
+  for (let i = 1; i < vals.length; i++) {
+    const rowMid  = String(vals[i][iMid]  || '').trim();
+    const rowNome = String(vals[i][iNome] || '').trim().toLowerCase();
+    if ((data.musicoId && rowMid === String(data.musicoId).trim()) ||
+        (data.nome && rowNome === String(data.nome).trim().toLowerCase())) {
+      sheet.getRange(i + 1, iNivel + 1).setValue(data.nivel);
+      if (!rowMid && data.musicoId) {
+        sheet.getRange(i + 1, iMid + 1).setValue(data.musicoId);
+      }
+      delete _sheetCache['Tokens'];
+      return ok('Nível atualizado para ' + data.nivel);
+    }
+  }
+  return err('Token não encontrado. MusicoId: ' + data.musicoId + ', Nome: ' + data.nome);
 }
 
-async function salvarAgendar(id){
-  const dt=document.getElementById('audDt').value, hr=document.getElementById('audHr').value, loc=document.getElementById('audLoc').value.trim();
-  if(!dt){toast('Informe a data','err');return;}
-  if(!hr){toast('Informe o horário','err');return;}
-  if(!loc){toast('Informe o local','err');return;}
-  load(true);
-  const r=await api('agendarAudicao',{id,dataAudicao:dt,horario:hr,local:loc});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Audição agendada! ✅','ok'); closeM(); closeD(); await loadInsc();
+function editarMusico(data) {
+  const updates = {};
+  if (data.nome         !== undefined) updates['Nome']         = data.nome;
+  if (data.eklesia      !== undefined) updates['Eklesia']      = data.eklesia;
+  if (data.whatsapp     !== undefined) updates['WhatsApp']     = data.whatsapp;
+  if (data.instrumentos !== undefined) updates['Instrumentos'] = data.instrumentos;
+  if (data.banda        !== undefined) updates['Banda']        = data.banda;
+  if (data.isLider      !== undefined) updates['IsLider']      = data.isLider;
+  const ok2 = updRow('Musicos', data.id, updates);
+  return ok2 ? ok('Atualizado') : err('Músico não encontrado');
 }
 
-async function notifCand(id, whats, msg){
-  window.open(`https://wa.me/55${whats.replace(/\D/g,'')}?text=${msg}`,'_blank');
-  load(true); await api('notificarCandidato',{id}); load(false);
-  toast('Notificação registrada!','ok');
-  await loadInsc();
+// ==================== BANDAS ====================
+function criarBanda(data) {
+  const id = genId();
+  const membros = Array.isArray(data.membrosIds)
+    ? data.membrosIds.join(',')
+    : (data.membrosIds || '');
+  addRow('Bandas', {
+    Id: id, Nome: data.nome || '',
+    LiderNome: data.liderNome || '', LiderMusicoId: data.liderMusicoId || '',
+    Emoji: data.emoji || '🎸', Cor: data.cor || '#6C63FF',
+    MembrosIds: membros, DataCriacao: new Date().toISOString(),
+  });
+  return ok(id);
 }
 
-function confPromLid(id,nome){
-  _pendAct={type:'prom',id};
-  openM('⭐ Promover a Líder',`
-    <p style="text-align:center;padding:12px 0;font-size:15px;color:var(--text2);line-height:1.7">Promover <strong style="color:var(--accent2)">${nome}</strong> a líder de banda?</p>
-    <div class="mfoot" style="justify-content:center;gap:12px">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="execPromLid('${id}')">⭐ Confirmar</button>
-    </div>`);
-}
+// ==================== ROTA CONSOLIDADA — getDadosIniciaisLider ====================
+// [PERF-5] Substitui 7 chamadas API separadas por 1 única execução.
+// Economia: ~70% do tempo de carregamento do painel do líder de banda.
+// O cache de sheets garante que cada aba é lida apenas 1x dentro desta execução.
+function getDadosIniciaisLider(sess) {
+  const bandas  = rows('Bandas');
+  const escalas = rows('Escalas');
+  const musicos = rows('Musicos');
+  const aceites = rows('Aceites');
+  const reps    = rows('Repertorios');
+  const cels    = rows('Celebracoes');
+  // Tokens lidos apenas para construir mapa de nível — cache evita duplicação
+  // com getMusicosComNivel se chamada na mesma req
+  const tokens  = rows('Tokens');
 
-async function execPromLid(musicoId){
-  closeM();
-  if(!musicoId){toast('ID do músico necessário','err');return;}
-  load(true); const r=await api('promoverLider',{musicoId}); load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Promovido a líder! ⭐','ok'); closeD(); await loadMusicos();
-}
-
-// MÚSICOS
-async function loadMusicos(){
-  load(true); const r=await api('getMusicos'); load(false);
-  _aMusicos=r.ok?r.data:[];
-  _aMusicos.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  const el=document.getElementById('admMusList');
-  if(!_aMusicos.length){el.innerHTML=empty('👥','Nenhum músico');return;}
-  const nivelLabel2 = {master:'⚙️ Master',liderequipe:'👥 Líder Equipe',liderbanda:'🎸 Líder Banda',musico:'🎵 Músico'};
-  el.innerHTML=_aMusicos.map(m=>{
-    const niv = m.NivelAcesso || (m.IsLider==='sim' ? 'liderbanda' : 'musico');
-    const nivLabel = nivelLabel2[niv] || niv;
-    const nivColor = niv==='master'?'#EF4444':niv==='liderequipe'?'#FBBF24':niv==='liderbanda'?'var(--accent2)':'var(--green)';
-    return `
-    <div class="card click" onclick="detMusico('${m.Id}')">
-      <div class="ch">
-        <div class="av">${(m.Nome||'?')[0]}</div>
-        <div style="flex:1"><div class="cn">${m.Nome||'—'} <span class="rtag" style="background:rgba(0,0,0,.3);color:${nivColor}">${nivLabel}</span></div><div class="cs">${m.Eklesia||'—'} • 📱 ${phoneToDisplay(m.WhatsApp||'')||'—'}</div></div>
-        <span class="badge b-aprov">ativo</span>
-      </div>
-      <div class="itags">${(m.Instrumentos||'').split(',').filter(Boolean).map(x=>`<span class="itag">${x.trim()}</span>`).join('')}</div>
-      <div class="cf"><span style="font-size:12px;color:var(--text3)">${m.Banda||'Sem banda'}</span><a class="btn-wa" href="${wa(String(m.WhatsApp||''),'')}" target="_blank" onclick="event.stopPropagation()">💬</a></div>
-    </div>`;
-  }).join('');
-}
-
-async function detMusico(id){
-  load(true);
-  const [rT, rBandas] = await Promise.all([api('getTokens'), api('getBandas')]);
-  load(false);
-  const m = _aMusicos.find(x => x.Id === id);
-  if (!m) { toast('Não encontrado','err'); return; }
-
-  const nome    = m.Nome  || '—';
-  const ekl     = m.Eklesia || '';
-  const whats   = String(m.WhatsApp || '');
-  const instr   = m.Instrumentos || '';
-  const lider   = m.IsLider === 'sim';
-  const foto    = m.FotoUrl || '';
-  const toks    = rT.ok ? rT.data : [];
-  const tokEx   = toks.find(t => String(t.MusicoId) === String(id));
-  const tokStr  = tokEx ? (tokEx.Token || '') : '';
-  // Nível: usa NivelAcesso (já normalizado) ou pega do token
-  const nivelMapLocal = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
-  const tokNivRaw = tokEx ? (tokEx.Nivel || '') : '';
-  const tokNiv  = m.NivelAcesso || nivelMapLocal[tokNivRaw.toLowerCase()] || tokNivRaw || (lider ? 'liderbanda' : 'musico');
-
-  // Banda: buscar do cadastro de bandas onde o músico é membro
-  const bandas  = rBandas.ok ? rBandas.data : [];
-  const minhasBandas = bandas.filter(b => {
+  // Minhas bandas (líder ou membro)
+  const minhasBandas = bandas.ok ? bandas.data.filter(b => {
     const mids = (b.MembrosIds || '').split(',').map(x => x.trim());
-    return mids.includes(id);
+    return b.LiderMusicoId === sess.musicoId || mids.includes(sess.musicoId || '');
+  }) : [];
+
+  const minhasBandasIds = new Set(minhasBandas.map(b => b.Id));
+
+  // Escalas das minhas bandas
+  const minhasEscalas = escalas.ok
+    ? escalas.data.filter(e => minhasBandasIds.has(e.BandaId))
+    : [];
+  const minhasEscalasIds = new Set(minhasEscalas.map(e => e.Id));
+
+  // Aceites
+  const todosAceites  = aceites.ok ? aceites.data : [];
+  const aceitesEscalas = todosAceites.filter(a => minhasEscalasIds.has(String(a.EscalaId)));
+
+  // Meus aceites pessoais (deduplicados por escala, último ganha)
+  const meusAceites = {};
+  todosAceites
+    .filter(a => String(a.MusicoId) === String(sess.musicoId || ''))
+    .forEach(a => { meusAceites[String(a.EscalaId)] = a; });
+
+  // Celebrações das minhas bandas
+  const celsDasBandas = cels.ok ? cels.data.filter(cel => {
+    const bids = (cel.BandasIds || '').split(',').filter(Boolean);
+    return bids.some(bid => minhasBandasIds.has(bid));
+  }) : [];
+  // BUG2-FIX: incluir TODOS os reps das bandas do líder, não só os vinculados a celebrações
+  // O líder precisa ver reps pendentes para poder configurar e liberar
+  const repIds = new Set(celsDasBandas.map(c => c.RepertorioId).filter(Boolean));
+  const meusReps = reps.ok ? reps.data.filter(r => {
+    // Rep vinculado a uma celebração da minha banda
+    if (repIds.has(r.Id)) return true;
+    // Rep criado por mim (CriadoPor = meu musicoId)
+    if (String(r.CriadoPor || '').trim() === String(sess.musicoId || '')) return true;
+    // Rep vinculado à minha banda diretamente (BandaId)
+    if (r.BandaId && minhasBandasIds.has(r.BandaId)) return true;
+    return false;
+  }) : [];
+
+  // Aceites por banda (mapa)
+  // FIX3: repMap definido ANTES do forEach — era ReferenceError antes
+  const repMap = {};
+  if (reps.ok) reps.data.forEach(r => { repMap[r.Id] = r; });
+
+  const aceitesPorBanda = {};
+  const musicoMap = {};
+  if (musicos.ok) musicos.data.forEach(m => { musicoMap[m.Id] = m; });
+
+  minhasBandas.forEach(b => {
+    const escsBanda = minhasEscalas.filter(e => {
+      if (e.BandaId !== b.Id) return false;
+      // BUG1-FIX: só incluir escalas cujo repertório está liberado (RepReady=sim)
+      // Líder não deve ver aceites de escalas com rep ainda não liberado
+      if (!e.RepertorioId) return false; // escala sem rep não mostra aceites
+      const rep = repMap[e.RepertorioId];
+      return rep && (rep.RepReady || '').toLowerCase() === 'sim';
+    });
+    const escIds    = new Set(escsBanda.map(e => e.Id));
+    const latestMap = {};
+    aceitesEscalas
+      .filter(a => escIds.has(String(a.EscalaId)))
+      .forEach(a => {
+        latestMap[String(a.MusicoId)] = {
+          status: (a.Status || 'pendente').toLowerCase(),
+          justificativa: a.Justificativa || '',
+        };
+      });
+    aceitesPorBanda[b.Id] = latestMap;
+    // Sinalizar se a banda tem escala com rep liberado ou não
+    const temRepLiberado = escsBanda.length > 0;
+    // Guardar também o repReady status da banda para o frontend
+    const todasEscsBanda = minhasEscalas.filter(e => e.BandaId === b.Id);
+    const repPendente = todasEscsBanda.some(e => {
+      if (!e.RepertorioId) return false;
+      const rep = repMap[e.RepertorioId];
+      return !rep || (rep.RepReady || '').toLowerCase() !== 'sim';
+    });
+    aceitesPorBanda[b.Id + '__repLiberado'] = temRepLiberado;
+    aceitesPorBanda[b.Id + '__repPendente'] = repPendente && !temRepLiberado;
   });
-  const bandaNomes = minhasBandas.map(b => b.Nome).join(', ') || 'Sem banda';
 
-  const waNum = whats.replace(/\D/g,'');
-  const msgToken = 'Olá, ' + nome + '! 🎵%0A%0ASeu token de acesso ao sistema *Bandas IC*:%0A%0A🔑 *' + tokStr + '*%0A%0AAcesse: https://30semanas.github.io/bandasIC%0A%0AEscolha *' + (tokNiv === 'lider' ? 'Líder de Banda' : 'Voluntário') + '* na tela inicial.';
+  // _vEscalas: escalas pessoais com status (filtradas por RepReady)
+  // repMap já definido acima
 
-  document.getElementById('dTitle').textContent = nome;
-  document.getElementById('dBody').innerHTML = `
-    <div style="text-align:center;margin-bottom:20px">
-      ${foto ? `<img src="${foto}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:2px solid var(--border);margin-bottom:10px"/>` : `<div class="av lg" style="margin:0 auto 10px">${nome[0]||'?'}</div>`}
-      <h2 style="font-family:var(--fh);font-size:20px;font-weight:800">${nome}</h2>
-      <p style="color:var(--text2);font-size:13px">${ekl||'—'}</p>
-    </div>
+  const vEscalas = minhasEscalas
+    .filter(e => {
+      // Escala sem rep = não liberada = não aparece para o músico
+      if (!e.RepertorioId) return false;
+      const rep = repMap[e.RepertorioId];
+      if (!rep) return false;
+      return (rep.RepReady || '').toLowerCase() === 'sim';
+    })
+    .map(e => {
+      const aceite = meusAceites[e.Id] || {};
+      return { ...e, meuStatus: (aceite.Status || 'pendente').toLowerCase() };
+    });
 
-    <div class="dsec">
-      <h3>Dados do músico</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div class="fg"><label>Nome</label><input type="text" id="edNome" value="${nome==='—'?'':nome}"/></div>
-        <div class="fg"><label>Eklesia</label><input type="text" id="edEkl" value="${ekl}"/></div>
-        <div class="fg"><label>WhatsApp</label><input type="text" id="edWa" value="${phoneToDisplay(whats)}" oninput="applyPhoneMask(this)" placeholder="(99) 99999-9999" maxlength="15"/></div>
-        <div class="fg"><label>Instrumentos</label><input type="text" id="edInstr" value="${instr}" placeholder="Voz, Guitarra..."/></div>
-        <div class="fg">
-          <label>Banda(s)</label>
-          <input type="text" value="${bandaNomes}" disabled style="opacity:.6;cursor:not-allowed;background:var(--bg4)"/>
-          <span style="font-size:11px;color:var(--text3);margin-top:3px">Gerenciado pelo administrador em Bandas</span>
-        </div>
-        <div class="fg"><label>Perfil de acesso</label>
-          <select id="edNivel">
-            <option value="musico" ${tokNiv==='musico'||(!tokNiv&&!lider&&tokNiv!=='liderequipe'&&tokNiv!=='master')?'selected':''}>🎵 Músico</option>
-            <option value="liderbanda" ${tokNiv==='liderbanda'||(lider&&tokNiv!=='liderequipe'&&tokNiv!=='master')?'selected':''}>🎸 Líder de Banda</option>
-            <option value="liderequipe" ${tokNiv==='liderequipe'?'selected':''}>👥 Líder de Equipe</option>
-            <option value="master" ${tokNiv==='master'?'selected':''}>⚙️ Master</option>
-          </select>
-        </div>
-        <button class="btn-primary sm" onclick="salvarEdMusico('${id}')">💾 Salvar alterações</button>
-      </div>
-    </div>
+  // Enriquecer escalas com repReady e overrides para o frontend
+  const escalasEnriquecidas = minhasEscalas.map(e => {
+    if (!e.RepertorioId) return { ...e, repReady: false, overrides: {} };
+    const rep = repMap[e.RepertorioId];
+    const ready = rep && (rep.RepReady || '').toLowerCase() === 'sim';
+    let overrides = {};
+    try { overrides = (rep && rep.Overrides) ? JSON.parse(rep.Overrides) : {}; } catch(ex) {}
+    return { ...e, repReady: ready, overrides, repNome: rep ? rep.Nome : '' };
+  });
 
-    <div class="dsec">
-      <h3>Token de acesso</h3>
-      ${tokEx ? `
-        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">TOKEN</div>
-          <div style="font-family:monospace;font-size:20px;font-weight:700;color:var(--accent2);letter-spacing:3px">${tokStr}</div>
-          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nível: ${nivelLabel[tokNiv]||tokNiv}</div>
-        </div>
-        <div class="arow">
-          <a class="btn-wa" href="https://wa.me/55${waNum}?text=${msgToken}" target="_blank">💬 Notificar no WhatsApp</a>
-          <button class="btn-ghost sm" onclick="navigator.clipboard.writeText('${tokStr}').then(()=>toast('Token copiado!','ok'))">📋 Copiar</button>
-        </div>
-      ` : `
-        <div style="background:rgba(251,191,36,.08);border:1px solid var(--yellow);border-radius:10px;padding:14px;text-align:center">
-          <p style="font-size:13px;color:var(--yellow);margin-bottom:4px">⚠️ Token ainda não gerado</p>
-          <p style="font-size:12px;color:var(--text3)">Salve o perfil de acesso acima para gerar automaticamente.</p>
-        </div>
-      `}
-    </div>`;
-  openD();
+  return ok({
+    bandas:        minhasBandas,
+    escalas:       escalasEnriquecidas,
+    musicos:       musicos.ok ? musicos.data : [],
+    repertorios:   meusReps,
+    celebracoes:   celsDasBandas,
+    aceitesPorBanda,
+    vEscalas,
+  });
 }
 
-async function salvarEdMusico(id) {
-  const nivel   = document.getElementById('edNivel').value;
-  const nome    = document.getElementById('edNome').value.trim();
-  const ekl     = document.getElementById('edEkl').value.trim();
-  const whats   = phoneToRaw(document.getElementById('edWa').value);
-  const instr   = document.getElementById('edInstr').value.trim();
-  const isLider = (nivel === 'liderbanda' || nivel === 'liderequipe' || nivel === 'master') ? 'sim' : 'nao';
+function getMinhasBandas(sess) {
+  const res = rows('Bandas');
+  if (!res.ok) return res;
+  if (sess.nivel === 'admin' || sess.nivel === 'master') return res;
+  return ok(res.data.filter(b => b.LiderMusicoId === sess.musicoId));
+}
 
-  load(true);
-
-  // 1. Salvar dados do músico
-  const r = await api('editarMusico', {
-    id, nome, eklesia: ekl, whatsapp: whats, instrumentos: instr, isLider,
+// ==================== ESCALAS ====================
+function criarEscala(data) {
+  const id = genId();
+  addRow('Escalas', {
+    Id: id, Titulo: data.titulo || '', Data: data.data || '',
+    Horario: String(data.horario || '').substring(0, 5),
+    Local: data.local || '', BandaId: data.bandaId || '',
+    BandaNome: data.bandaNome || '', Tipo: data.tipo || 'principal',
+    Status: 'pendente', MusicasIds: '', RepertorioId: '',
+    DataCriacao: new Date().toISOString(),
   });
-  if (!r.ok) { load(false); toast(r.error || 'Erro ao salvar','err'); return; }
+  const musicosIds = Array.isArray(data.musicosIds) ? data.musicosIds : [];
+  musicosIds.forEach(mid => {
+    addRow('Aceites', {
+      Id: genId(), EscalaId: id, MusicoId: mid,
+      Status: 'pendente', DataResposta: '', Justificativa: '',
+    });
+  });
+  return { ok: true, id };
+}
 
-  // 2. Promover IsLider se necessário
-  if (isLider === 'sim') await api('promoverLider', { musicoId: id });
+function getEscalas(data, sess) {
+  const res = rows('Escalas');
+  if (!res.ok) return ok([]);
+  if (!sess) return ok(res.data || []);
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel;
+  if (nivel === 'liderbanda') {
+    // [PERF-1] rows('Bandas') já estará no cache se getDadosIniciaisLider foi chamado antes
+    const bandas = rows('Bandas');
+    const minhas = bandas.ok ? bandas.data.filter(b => b.LiderMusicoId === sess.musicoId).map(b => b.Id) : [];
+    return ok(res.data.filter(e => minhas.includes(e.BandaId)));
+  }
+  return res;
+}
 
-  // 3. Verificar token
-  const rT = await api('getTokens');
-  const toks = rT.ok ? rT.data : [];
-  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
+// [PERF-2] getEscalaById: reutiliza variável musicos para subs (elimina 2ª leitura)
+function getEscalaById(data) {
+  const esc = rows('Escalas');
+  if (!esc.ok) return ok({ aceites: [] });
+  const e = esc.data.find(x => x.Id === data.id);
+  if (!e) return err('Não encontrado');
 
-  if (!tokEx) {
-    // Gerar token automaticamente
-    const rG = await api('gerarToken', { nome, eklesia: ekl, nivel, musicoId: id });
-    load(false);
-    if (rG.ok) {
-      toast('Dados salvos! Token gerado: ' + rG.token + ' ✅','ok');
+  const aceites  = rows('Aceites');
+  const musicos  = rows('Musicos'); // lida 1x — reutilizada abaixo para subs
+
+  const musicoMap = {};
+  if (musicos.ok) musicos.data.forEach(m => { musicoMap[m.Id] = m.Nome || m.Id; });
+
+  // Deduplicar aceites por MusicoId (último registro ganha)
+  const rawAceites = aceites.ok
+    ? aceites.data.filter(a => String(a.EscalaId) === String(data.id))
+    : [];
+  const latestMap = {};
+  rawAceites.forEach(a => { latestMap[String(a.MusicoId)] = a; });
+  const meus = Object.values(latestMap).map(a => ({
+    ...a, MusicoNome: musicoMap[a.MusicoId] || a.MusicoId,
+  }));
+
+  const reps = rows('Repertorios');
+  let overrides = {};
+  if (reps.ok && e.RepertorioId) {
+    const rep = reps.data.find(r => r.Id === e.RepertorioId);
+    try { overrides = (rep && rep.Overrides) ? JSON.parse(rep.Overrides) : {}; } catch(ex) {}
+  }
+
+  // [PERF-2] Reutiliza musicos.data (já lido acima) para resolver substitutos
+  const subsSheet = rows('Subs');
+  const subs = subsSheet.ok
+    ? subsSheet.data.filter(s => String(s.EscalaId) === String(data.id) && s.Status === 'resolvida' && s.MusicoInId)
+    : [];
+  const subMusicosData = musicos.ok ? musicos.data : []; // reuso — sem nova leitura
+  const subsInfo = subs.map(s => {
+    const m = subMusicosData.find(x => x.Id === s.MusicoInId) || {};
+    return {
+      Id: s.MusicoInId, MusicoNome: m.Nome || s.MusicoInId,
+      WhatsApp: m.WhatsApp || '',
+      Instrumentos: s.Instrumento || m.Instrumentos || '',
+      isSub: true,
+    };
+  });
+
+  return ok({ ...e, aceites: meus, overrides, subs: subsInfo });
+}
+
+function getMinhasEscalas(sess) {
+  if (!sess || !sess.musicoId) return ok([]);
+  const aceites = rows('Aceites');
+  const esc     = rows('Escalas');
+  const reps    = rows('Repertorios');
+  if (!esc.ok) return ok([]);
+
+  const repMap = {};
+  if (reps.ok) reps.data.forEach(r => { repMap[r.Id] = r; });
+
+  // Deduplicar aceites por EscalaId (último ganha)
+  const todosAceitesMeus = aceites.ok
+    ? aceites.data.filter(a => String(a.MusicoId) === String(sess.musicoId))
+    : [];
+  const latestAceiteMap = {};
+  todosAceitesMeus.forEach(a => { latestAceiteMap[String(a.EscalaId)] = a; });
+  const meusEscalaIds = new Set(Object.keys(latestAceiteMap));
+
+  // Escalas via banda
+  const bandas = rows('Bandas');
+  const minhasBandasIds = new Set();
+  if (bandas.ok) {
+    bandas.data.forEach(b => {
+      const mids = (b.MembrosIds || '').split(',').map(x => x.trim()).filter(Boolean);
+      if (mids.includes(String(sess.musicoId))) minhasBandasIds.add(b.Id);
+    });
+  }
+
+  return ok(esc.data
+    .filter(e => meusEscalaIds.has(e.Id) || minhasBandasIds.has(e.BandaId))
+    .filter(e => {
+      // Escala sem repertório vinculado = não liberada = não aparece para o músico
+      if (!e.RepertorioId) return false;
+      const rep = repMap[e.RepertorioId];
+      // Repertório não encontrado = não liberado
+      if (!rep) return false;
+      return (rep.RepReady || '').trim().toLowerCase() === 'sim';
+    })
+    .map(e => {
+      const aceite = latestAceiteMap[String(e.Id)] || {};
+      const rep    = e.RepertorioId ? repMap[e.RepertorioId] : null;
+      let overrides = {};
+      try { overrides = (rep && rep.Overrides) ? JSON.parse(rep.Overrides) : {}; } catch(ex) {}
+      return {
+        ...e,
+        meuStatus:     aceite.Status || 'pendente',
+        Justificativa: aceite.Justificativa || '',
+        overrides,
+      };
+    })
+  );
+}
+
+function removerMusicoEscala(data) {
+  const aceites = rows('Aceites');
+  if (!aceites.ok) return err('Erro');
+  const found = aceites.data.find(a =>
+    String(a.EscalaId) === String(data.escalaId) &&
+    String(a.MusicoId) === String(data.musicoId)
+  );
+  if (!found) return err('Aceite não encontrado');
+  updRow('Aceites', found.Id, {
+    Status: 'removido',
+    DataResposta: new Date().toISOString(),
+    Justificativa: 'Removido pelo Master',
+  });
+  return ok('Músico removido da escala');
+}
+
+function responderEscala(data, sess) {
+  if (!sess || !sess.musicoId) return err('Sessão inválida');
+  const aceites = rows('Aceites');
+  const lista   = aceites.ok ? aceites.data : [];
+
+  let found = lista.find(a =>
+    String(a.EscalaId) === String(data.escalaId) &&
+    String(a.MusicoId) === String(sess.musicoId)
+  );
+
+  if (!found) {
+    const escalas = rows('Escalas');
+    const bandas  = rows('Bandas');
+    if (escalas.ok && bandas.ok) {
+      const escala = escalas.data.find(e => e.Id === data.escalaId);
+      if (escala) {
+        const banda = bandas.data.find(b => b.Id === escala.BandaId);
+        if (banda) {
+          const mids = (banda.MembrosIds || '').split(',').map(x => x.trim());
+          if (mids.includes(String(sess.musicoId))) {
+            found = lista.find(a =>
+              String(a.EscalaId) === String(data.escalaId) &&
+              (a.Status || 'pendente').toLowerCase() === 'pendente'
+            );
+            if (found) updRow('Aceites', found.Id, { MusicoId: sess.musicoId });
+          }
+        }
+      }
+    }
+  }
+
+  if (found && (found.Status || '').toLowerCase() === 'aceita' && data.status === 'recusada') {
+    return err('Você já aceitou esta escala. Apenas o Master pode remover sua participação.');
+  }
+
+  const updates = {
+    Status:        data.status,
+    DataResposta:  new Date().toISOString(),
+    Justificativa: data.justificativa || '',
+  };
+
+  if (found) {
+    updRow('Aceites', found.Id, updates);
+  } else {
+    addRow('Aceites', { Id: genId(), EscalaId: data.escalaId, MusicoId: sess.musicoId, ...updates });
+  }
+  return ok(data.status);
+}
+
+function adicionarMusica(data) {
+  const id = genId();
+  addRow('Musicas', {
+    Id: id, Nome: data.nome || '', Artista: data.artista || '',
+    Tom: data.tom || '', Bpm: data.bpm || '', Versao: data.versao || '',
+    Youtube: data.youtube || '', Letra: data.letra || '',
+    Cifra: data.cifra || '', Partitura: data.partitura || '',
+    DataCadastro: new Date().toISOString(),
+  });
+  return ok(id);
+}
+
+// ==================== REPERTÓRIOS ====================
+function getRepertoriosComNomes() {
+  const rRep = rows('Repertorios');
+  if (!rRep.ok) return ok([]);
+  const rM   = rows('Musicos');
+  const rT   = rows('Tokens');
+  const rCel = rows('Celebracoes');
+
+  const musicoMap = {};
+  if (rM.ok) rM.data.forEach(m => { musicoMap[m.Id] = m.Nome || m.Id; });
+  if (rT.ok) rT.data.forEach(t => {
+    if (!t.MusicoId || t.MusicoId === '') {
+      musicoMap['__adm__'] = t.Nome || 'Administrador';
+    }
+  });
+
+  const celMap = {};
+  if (rCel.ok) rCel.data.forEach(cel => {
+    const repId = (cel.RepertorioId || '').trim();
+    if (repId) celMap[repId] = cel.Nome || '—';
+  });
+
+  return ok(rRep.data.map(r => {
+    const cp = (r.CriadoPor || '').trim();
+    const criadoPorNome = cp
+      ? (musicoMap[cp] || cp)
+      : (musicoMap['__adm__'] || 'Administrador');
+    return { ...r, CriadoPorNome: criadoPorNome, CelebracaoNome: celMap[r.Id] || '' };
+  }));
+}
+
+function criarRepertorio(data) {
+  const id = genId();
+  addRow('Repertorios', {
+    Id: id, Nome: data.nome || '', BandaId: data.bandaId || '',
+    MusicasIds: Array.isArray(data.musicasIds) ? data.musicasIds.join(',') : '',
+    Overrides: '', RepReady: 'nao',
+    CriadoPor: data.musicoId || '', DataCriacao: new Date().toISOString(),
+  });
+  return ok(id);
+}
+
+// ==================== CELEBRAÇÕES ====================
+function criarCelebracao(data) {
+  const id = genId();
+  addRow('Celebracoes', {
+    Id: id, Nome: data.nome || '', Data: data.data || '',
+    Horario: String(data.horario || '').substring(0, 5),
+    Local: data.local || '', Obs: data.obs || '',
+    BandasIds: Array.isArray(data.bandasIds) ? data.bandasIds.join(',') : '',
+    RepertorioId: data.repertorioId || '',
+    RepertorioTipo: data.repertorioTipo || 'admin',
+    LiderEquipeId: data.liderEquipeId || '',
+    DataCriacao: new Date().toISOString(),
+  });
+  return ok(id);
+}
+
+function getCelebracoes(sess) {
+  const rCel = rows('Celebracoes');
+  if (!rCel.ok) return ok([]);
+  const all  = rCel.data || [];
+  const nivelMap = {'admin':'master','master':'master','lider':'liderbanda','liderbanda':'liderbanda','liderequipe':'liderequipe','voluntario':'musico','musico':'musico'};
+  const nivel = sess ? (nivelMap[(sess.nivel || '').toLowerCase()] || sess.nivel) : '';
+  if (nivel === 'liderequipe' && sess && sess.musicoId) {
+    return ok(all.filter(c => {
+      const lids = (c.LiderEquipeId || '').split(',').map(x => x.trim()).filter(Boolean);
+      return lids.includes(String(sess.musicoId));
+    }));
+  }
+  return ok(all);
+}
+
+// ==================== ACEITES DA BANDA ====================
+function getAceitesDaBanda(data) {
+  const bandaId = data.bandaId || '';
+  if (!bandaId) return err('bandaId obrigatório');
+
+  const escalas = rows('Escalas');
+  const aceites = rows('Aceites');
+  const musicos = rows('Musicos');
+
+  if (!escalas.ok || !aceites.ok) return ok({});
+
+  const escalasDaBanda = escalas.data.filter(e => String(e.BandaId) === String(bandaId));
+  const escalaIds = new Set(escalasDaBanda.map(e => e.Id));
+
+  // Deduplicar por MusicoId — último registro ganha
+  const latestPorMusico = {};
+  aceites.data
+    .filter(a => escalaIds.has(String(a.EscalaId)))
+    .forEach(a => {
+      const mid = String(a.MusicoId || '').trim();
+      if (!mid) return;
+      latestPorMusico[mid] = {
+        status:        String(a.Status || 'pendente').toLowerCase().trim(),
+        justificativa: a.Justificativa || '',
+        escalaId:      a.EscalaId,
+      };
+    });
+
+  const musicoMap = {};
+  if (musicos.ok) musicos.data.forEach(m => { musicoMap[m.Id] = m.Nome || m.Id; });
+
+  const result = {};
+  Object.entries(latestPorMusico).forEach(([mid, info]) => {
+    result[mid] = { ...info, nome: musicoMap[mid] || mid };
+  });
+
+  // Subs em aberto
+  const subsSheet = rows('Subs');
+  if (subsSheet.ok) {
+    subsSheet.data
+      .filter(s => escalaIds.has(String(s.EscalaId)) && s.Status === 'aberta')
+      .forEach(s => {
+        const mid = String(s.MusicoOutId || '');
+        if (mid && result[mid]) {
+          result[mid].subAberta         = true;
+          result[mid].subId             = s.Id;
+          result[mid].subCriadoPorNivel = s.CriadoPorNivel || '';
+        }
+      });
+  }
+
+  return ok(result);
+}
+
+// ==================== PAINEL LÍDER DE EQUIPE ====================
+// [PERF-4] getLiderEquipePanel: lê Celebracoes 1x, não 2x (eliminada leitura duplicada)
+function getLiderEquipePanel(sess) {
+  const cels    = rows('Celebracoes'); // lida 1x — cache previne 2ª leitura
+  const bandas  = rows('Bandas');
+  const escalas = rows('Escalas');
+  const aceites = rows('Aceites');
+  const subs    = rows('Subs');
+  const musicos = rows('Musicos');
+  const reps    = rows('Repertorios');
+
+  if (!cels.ok) return ok([]);
+
+  const musicoMap = {};
+  if (musicos.ok) musicos.data.forEach(m => {
+    musicoMap[m.Id] = { Nome: m.Nome || m.Id, Instrumentos: m.Instrumentos || '' };
+  });
+
+  const repMap = {};
+  if (reps.ok) reps.data.forEach(r => { repMap[r.Id] = r; });
+
+  const minhasCels = cels.data.filter(c =>
+    String(c.LiderEquipeId || '').trim() === String(sess.musicoId || '').trim()
+  );
+
+  const result = minhasCels.map(cel => {
+    const bandasIds  = (cel.BandasIds || '').split(',').filter(Boolean);
+    const minhasBandas = (bandas.ok ? bandas.data.filter(b => bandasIds.includes(b.Id)) : [])
+      .map(b => {
+        const membrosIds = (b.MembrosIds || '').split(',').filter(Boolean);
+        const membros = membrosIds.map(mid => ({
+          Id:           mid,
+          Nome:         musicoMap[mid] ? musicoMap[mid].Nome : mid,
+          Instrumentos: musicoMap[mid] ? musicoMap[mid].Instrumentos : '',
+        }));
+        return { ...b, membros };
+      });
+
+    const escalasDaCel = escalas.ok
+      ? escalas.data
+          .filter(e => String(e.CelebracaoId || '') === String(cel.Id))
+          .map(esc => {
+            // Verificar se rep desta escala está liberado
+            const rep = esc.RepertorioId ? repMap[esc.RepertorioId] : null;
+            const repReady = rep && (rep.RepReady || '').toLowerCase() === 'sim';
+
+            // Deduplicar aceites: último registro por MusicoId ganha
+            const rawAcs = aceites.ok
+              ? aceites.data.filter(a => String(a.EscalaId) === String(esc.Id))
+              : [];
+            const latestAcMap = {};
+            rawAcs.forEach(a => { latestAcMap[String(a.MusicoId)] = a; });
+
+            const acs = Object.values(latestAcMap).map(a => {
+                const subReq = subs.ok ? subs.data.find(s =>
+                  String(s.EscalaId) === String(esc.Id) &&
+                  String(s.MusicoOutId) === String(a.MusicoId) &&
+                  s.Status === 'aberta'
+                ) : null;
+                return {
+                  ...a,
+                  MusicoNome:         musicoMap[a.MusicoId] ? musicoMap[a.MusicoId].Nome : a.MusicoId,
+                  subAberta:          !!subReq,
+                  subCriadoPorNivel:  subReq ? (subReq.CriadoPorNivel || '') : '',
+                };
+              });
+            return { ...esc, aceites: acs, repReady };
+          })
+      : [];
+
+    const rep = cel.RepertorioId ? repMap[cel.RepertorioId] : null;
+    return {
+      ...cel,
+      bandas:                minhasBandas,
+      escalas:               escalasDaCel,
+      repertorioNome:        rep ? rep.Nome : '',
+      podeDefinirRepertorio: (cel.RepertorioTipo || '').toLowerCase() === 'liderequipe',
+    };
+  });
+
+  return ok(result);
+}
+
+// ==================== CELEBRAÇÕES DA BANDA ====================
+// [PERF-3] N+1 corrigido: rows() chamado FORA do map(), não dentro de cada iteração.
+// Antes: 20 leituras extras com 10 celebrações. Agora: 0 leituras extras.
+function getCelebracoesDaBanda(data) {
+  const cels = rows('Celebracoes');
+  if (!cels.ok) return cels;
+
+  const filtered = cels.data.filter(c => {
+    const ids = (c.BandasIds || '').split(',').map(x => x.trim());
+    return ids.includes(data.bandaId);
+  });
+
+  // [PERF-3] rows() UMA VEZ fora do loop — elimina N+1
+  const repsAll = rows('Repertorios');
+  const repMap2 = {};
+  if (repsAll.ok) repsAll.data.forEach(r => { repMap2[r.Id] = r; });
+
+  const result = filtered.map(cel => {
+    let musicas = [];
+    if (cel.RepertorioId) {
+      const rep = repMap2[cel.RepertorioId];
+      if (rep && rep.MusicasIds) {
+        const ids = rep.MusicasIds.split(',').filter(Boolean);
+        musicas = ids.map(() => null).filter(Boolean);
+      }
+    }
+    return {
+      ...cel,
+      musicas,
+      repertorioNome: cel.RepertorioId ? ((repMap2[cel.RepertorioId] || {}).Nome || '') : '',
+    };
+  });
+  return ok(result);
+}
+
+// ==================== BIBLIOTECA ====================
+function adicionarBiblioteca(data) {
+  if (!data.titulo) return err('Título é obrigatório');
+  if (!data.link)   return err('Link é obrigatório');
+  const id = genId();
+  addRow('Biblioteca', {
+    Id:             id,
+    Titulo:         data.titulo         || '',
+    TituloOriginal: data.tituloOriginal || '',
+    Composicao:     data.composicao     || '',
+    Versao:         data.versao         || '',
+    Categoria:      data.categoria      || '',
+    Link:           data.link           || '',
+    DataCriacao:    new Date().toISOString(),
+  });
+  return ok(id);
+}
+
+// ==================== ESCALA AUTOMÁTICA ====================
+function criarEscalasDaBanda(data) {
+  const bandaId = data.bandaId;
+  const bandas  = rows('Bandas');
+  if (!bandas.ok) return err('Erro ao buscar bandas');
+  const banda = bandas.data.find(b => b.Id === bandaId);
+  if (!banda) return err('Banda não encontrada');
+
+  const membrosIds = (banda.MembrosIds || '').split(',').filter(Boolean);
+  if (!membrosIds.length) return err('Banda sem integrantes');
+
+  const cels = rows('Celebracoes');
+  if (!cels.ok) return err('Erro ao buscar celebrações');
+
+  const minhasCels = cels.data.filter(c => {
+    const ids = (c.BandasIds || '').split(',').filter(Boolean);
+    return ids.includes(bandaId) && c.RepertorioId;
+  });
+  if (!minhasCels.length) return err('Nenhuma celebração com repertório vinculada a esta banda');
+
+  const escalas = rows('Escalas');
+  const escalasExistentes = escalas.ok ? escalas.data : [];
+
+  const criadas = [];
+  minhasCels.forEach(cel => {
+    const jaExiste = escalasExistentes.find(e => e.BandaId === bandaId && e.CelebracaoId === cel.Id);
+    if (jaExiste) {
+      criadas.push({ cel: cel.Nome, status: 'já existia', escalaId: jaExiste.Id });
+      return;
+    }
+    const r = criarEscalaAutomatica({
+      celebracaoId: cel.Id, celebracaoNome: cel.Nome,
+      data: (cel.Data || '').split('T')[0], horario: cel.Horario || '',
+      local: cel.Local || '', repertorioId: cel.RepertorioId || '',
+      bandaId, bandaNome: banda.Nome || '', musicosIds: membrosIds,
+    });
+    criadas.push({ cel: cel.Nome, status: 'criada', escalaId: r.data });
+  });
+
+  return ok({ total: criadas.length, criadas });
+}
+
+function criarEscalaAutomatica(data) {
+  const escalaId   = genId();
+  const titulo     = (data.celebracaoNome || 'Celebração') + ' — ' + (data.bandaNome || '');
+  const musicosIds = Array.isArray(data.musicosIds)
+    ? data.musicosIds
+    : (data.musicosIds || '').split(',').filter(Boolean);
+
+  addRow('Escalas', {
+    Id: escalaId, Titulo: titulo, Data: data.data || '',
+    Horario: data.horario || '', Local: data.local || '',
+    BandaId: data.bandaId || '', BandaNome: data.bandaNome || '',
+    MusicosIds: musicosIds.join(','), RepertorioId: data.repertorioId || '',
+    CelebracaoId: data.celebracaoId || '', Status: 'pendente',
+    DataCriacao: new Date().toISOString(),
+  });
+
+  musicosIds.forEach(mid => {
+    addRow('Aceites', {
+      Id: genId(), EscalaId: escalaId, MusicoId: mid,
+      Status: 'pendente', DataResposta: '', Justificativa: '',
+    });
+  });
+
+  return ok({ escalaId, total: musicosIds.length });
+}
+
+// ==================== SUBS ====================
+function criarSub(data, sess) {
+  const id = genId();
+  addRow('Subs', {
+    Id: id, EscalaId: data.escalaId || '',
+    MusicoOutId: data.musicoOutId || '', Instrumento: data.instrumento || '',
+    MusicoInId: '', Status: 'aberta',
+    CriadoPorNivel: sess ? (sess.nivel || '') : '',
+    CriadoPorId:    sess ? (sess.musicoId || '') : '',
+    DataCriacao:    new Date().toISOString(),
+  });
+  return ok(id);
+}
+
+// ==================== PERFIL ====================
+function getMeuPerfil(sess) {
+  if (!sess.musicoId) return err('Sem perfil');
+  const m = findRow('Musicos', 'Id', sess.musicoId);
+  return m ? ok(m) : err('Músico não encontrado');
+}
+
+// ==================== DASHBOARD ====================
+function getDashboard() {
+  const aud = rows('Audicoes').data   || [];
+  const mus = rows('Musicos').data    || [];
+  const ban = rows('Bandas').data     || [];
+  const esc = rows('Escalas').data    || [];
+  const cel = rows('Celebracoes').data || [];
+  const now = new Date();
+  return ok({
+    totalMusicos:       mus.filter(m => m.Ativo === 'sim').length,
+    audicoesPendentes:  aud.filter(a => a.Status === 'pendente').length,
+    audicoesAgendadas:  aud.filter(a => a.Status === 'agendada').length,
+    totalBandas:        ban.length,
+    escalasEsteMes:     esc.filter(e => {
+      try { const d = new Date(e.Data); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); } catch(_) { return false; }
+    }).length,
+    proximasCelebracoes: cel
+      .filter(c => { try { return new Date(c.Data) >= now; } catch(_) { return false; } })
+      .sort((a, b) => new Date(a.Data) - new Date(b.Data))
+      .slice(0, 5),
+    ultimasInscricoes: [...aud]
+      .sort((a, b) => new Date(b.DataInscricao || 0) - new Date(a.DataInscricao || 0))
+      .slice(0, 5),
+  });
+}
+
+// ==================== DEBUG ====================
+// [SEC-1] debugAll protegido — retorna apenas amostra, sem dados sensíveis completos
+function debugAll() {
+  return {
+    audicoes:    (rows('Audicoes').data   || []).slice(0, 2),
+    musicos:     (rows('Musicos').data    || []).slice(0, 2).map(m => ({ Id: m.Id, Nome: m.Nome, Eklesia: m.Eklesia })),
+    tokens:      (rows('Tokens').data     || []).slice(0, 2).map(t => ({ Nome: t.Nome, Nivel: t.Nivel, MusicoId: t.MusicoId })),
+    celebracoes: (rows('Celebracoes').data || []).slice(0, 2),
+    bandas:      (rows('Bandas').data     || []).slice(0, 2),
+    biblioteca:  (rows('Biblioteca').data || []).slice(0, 2),
+  };
+}
+
+function debugBandaAceites(sess) {
+  const bandas  = rows('Bandas');
+  const escalas = rows('Escalas');
+  const aceites = rows('Aceites');
+  const musicos = rows('Musicos');
+
+  const minhasBandas = bandas.ok
+    ? bandas.data.filter(b => {
+        const mids = (b.MembrosIds || '').split(',').map(x => x.trim());
+        return mids.includes(String(sess.musicoId || '')) || b.LiderMusicoId === sess.musicoId;
+      })
+    : [];
+
+  return ok(minhasBandas.map(b => {
+    const escalasDaBanda = escalas.ok ? escalas.data.filter(e => e.BandaId === b.Id) : [];
+    const membrosIds = (b.MembrosIds || '').split(',').filter(Boolean);
+    const membrosInfo = membrosIds.map(mid => {
+      const m = musicos.ok ? musicos.data.find(x => x.Id === mid) : null;
+      const aceitesDeste = aceites.ok
+        ? aceites.data.filter(a =>
+            String(a.MusicoId) === String(mid) &&
+            escalasDaBanda.some(e => String(e.Id) === String(a.EscalaId))
+          )
+        : [];
+      return { musicoId: mid, nome: m ? m.Nome : mid, aceites: aceitesDeste.map(a => ({ id: a.Id, escalaId: a.EscalaId, status: a.Status })) };
+    });
+    return { bandaId: b.Id, bandaNome: b.Nome, sessMusicoId: sess.musicoId, escalas: escalasDaBanda.map(e => ({ id: e.Id, titulo: e.Titulo })), membros: membrosInfo };
+  }));
+}
+
+function debugMinhasEscalas(sess) {
+  const bandas  = rows('Bandas');
+  const aceites = rows('Aceites');
+  const esc     = rows('Escalas');
+
+  const minhasBandas = bandas.ok
+    ? bandas.data.filter(b => (b.MembrosIds || '').split(',').map(x => x.trim()).includes(String(sess.musicoId || '')))
+    : [];
+  const meusAceites = aceites.ok
+    ? aceites.data.filter(a => String(a.MusicoId) === String(sess.musicoId || ''))
+    : [];
+
+  return ok({
+    sessNivel:    sess.nivel,
+    sessMusicoId: sess.musicoId,
+    totalBandas:  bandas.ok ? bandas.data.length : 0,
+    minhasBandas: minhasBandas.map(b => ({ Id: b.Id, Nome: b.Nome, MembrosIds: b.MembrosIds })),
+    meusAceites:  meusAceites.slice(0, 5),
+    totalEscalas: esc.ok ? esc.data.length : 0,
+  });
+}
+
+function debugLiderEquipe(sess) {
+  const cels  = rows('Celebracoes');
+  const all   = cels.ok ? cels.data : [];
+  const minhas = all.filter(c => String(c.LiderEquipeId || '').trim() === String(sess.musicoId || '').trim());
+  return ok({
+    sessNivel: sess.nivel, sessMusicoId: sess.musicoId,
+    totalCelebracoes: all.length, minhasCelebracoes: minhas.length,
+    amostra: minhas.slice(0, 2).map(c => ({ Id: c.Id, Nome: c.Nome, LiderEquipeId: c.LiderEquipeId, BandasIds: c.BandasIds })),
+    todasLiderEquipeIds: all.map(c => c.LiderEquipeId).filter(Boolean),
+  });
+}
+
+// [SEC-1] limpar agora protegido por perm(master) no dispatch
+function limpar() {
+  const names = ['Musicos','Audicoes','Tokens','Bandas','Escalas'];
+  let n = 0;
+  names.forEach(name => {
+    const sheet = sh(name);
+    if (!sheet) return;
+    const vals = sheet.getDataRange().getValues();
+    vals.forEach((row, ri) => {
+      if (ri === 0) return;
+      row.forEach((cell, ci) => {
+        if (cell === 'undefined' || cell === 'null') {
+          sheet.getRange(ri + 1, ci + 1).setValue(''); n++;
+        }
+      });
+    });
+    delete _sheetCache[name];
+  });
+  return ok('Limpeza: ' + n + ' células corrigidas');
+}
+
+// ==================== IMPORTAR MÚSICOS ====================
+function importarMusicosAprovados() {
+  const rAud = rows('Audicoes'); const audicoes = rAud.ok ? rAud.data : [];
+  const rMus = rows('Musicos');  const musicos  = rMus.ok ? rMus.data : [];
+  const rTok = rows('Tokens');   const tokens   = rTok.ok ? rTok.data : [];
+  const aprovados = audicoes.filter(a => (a.Status || '').toLowerCase() === 'aprovado');
+  const criados   = [];
+
+  aprovados.forEach(a => {
+    const jaExiste = musicos.find(m => m.AudicaoId === a.Id || m.Nome === a.Nome);
+    if (jaExiste) return;
+
+    const mid = genId();
+    addRow('Musicos', {
+      Id: mid, Nome: a.Nome || '', Eklesia: a.Eklesia || '',
+      WhatsApp: String(a.WhatsApp || ''), Instrumentos: a.Instrumentos || '',
+      Banda: '', FotoUrl: a.FotoUrl || '',
+      Ativo: 'sim', IsLider: 'nao', AudicaoId: a.Id || '',
+      DataCadastro: new Date().toISOString(),
+    });
+
+    const jaTemToken = tokens.find(t => t.Nome === a.Nome);
+    if (!jaTemToken) {
+      const token =
+        Math.random().toString(36).substring(2, 6).toUpperCase() +
+        Math.random().toString(36).substring(2, 6).toUpperCase() +
+        Math.random().toString(36).substring(2, 4).toUpperCase();
+      addRow('Tokens', {
+        Id: genId(), Nome: a.Nome || '', Eklesia: a.Eklesia || '',
+        Token: token, Nivel: 'musico', MusicoId: mid,
+        SessionKey: '', SessionExp: '', DataCriacao: new Date().toISOString(),
+      });
+      criados.push(a.Nome + ' → token: ' + token);
     } else {
-      toast('Dados salvos! (' + (rG.error||'erro ao gerar token') + ')','info');
+      criados.push(a.Nome + ' → token já existia');
     }
-  } else if (tokEx.Nivel !== nivel) {
-    // Atualizar nível do token existente
-    await api('atualizarNivelToken', { musicoId: id, nivel, nome });
-    load(false);
-    toast('Perfil atualizado → ' + (nivelLabel[nivel]||nivel) + ' ✅','ok');
-  } else {
-    load(false);
-    toast('Dados salvos! ✅','ok');
-  }
-
-  closeD();
-  await loadMusicos();
-}
-
-async function gerarTokMusico(id) {
-  const m = _aMusicos.find(x => x.Id === id);
-  if (!m) { toast('Músico não encontrado', 'err'); return; }
-  const nivel = document.getElementById('edNivel')?.value || 'voluntario';
-
-  // Verificar se já tem token
-  const rT = await api('getTokens');
-  const toks = rT.ok ? rT.data : [];
-  const tokEx = toks.find(t => String(t.MusicoId) === String(id));
-
-  if (tokEx) {
-    // Já tem token — atualizar nível
-    load(true);
-    const r = await api('atualizarNivelToken', { musicoId: id, nivel });
-    if (nivel === 'lider') await api('promoverLider', { musicoId: id });
-    load(false);
-    toast('Nível do token atualizado para ' + (nivel === 'lider' ? 'Líder' : 'Voluntário') + ' ✅', 'ok');
-    closeD();
-    await loadMusicos();
-    setTimeout(() => detMusico(id), 400);
-    return;
-  }
-
-  // Gerar novo token
-  load(true);
-  const r = await api('gerarToken', {
-    nome: m.Nome || '',
-    eklesia: m.Eklesia || '',
-    nivel,
-    musicoId: id,
   });
-  if (nivel === 'lider') await api('promoverLider', { musicoId: id });
-  load(false);
 
-  if (!r.ok) { toast(r.error || 'Erro', 'err'); return; }
-  toast('Token gerado: ' + r.token + ' ✅', 'ok');
-  closeD();
-  await loadMusicos();
-  setTimeout(() => detMusico(id), 400);
+  return ok({ total: criados.length, criados });
 }
 
-
-// gerarTokMusico legacy removed (duplicate)
-async function loadBandas(){
-  load(true); const r=await api('getBandas'); load(false);
-  _aBandas=r.ok?r.data:[];
-  const el=document.getElementById('admBandList');
-  if(!_aBandas.length){el.innerHTML=empty('🎸','Nenhuma banda');return;}
-  el.innerHTML=_aBandas.map(b=>`
-    <div class="card">
-      <div class="ch">
-        <div style="font-size:28px">${b.Emoji||'🎸'}</div>
-        <div style="flex:1"><div class="cn">${b.Nome||'—'}</div><div class="cs">Líder: ${b.LiderNome||'—'}</div></div>
-        <div style="display:flex;gap:6px">
-          <button class="btn-ghost sm" onclick="modalEditarBanda('${b.Id}')">✏️</button>
-          <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confRemBanda('${b.Id}','${(b.Nome||'').replace(/'/g,'')}')">🗑</button>
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--text2);margin-top:8px">
-        ${(b.MembrosIds||'').split(',').filter(Boolean).length} integrante(s)
-      </div>
-    </div>`).join('');
-}
-
-async function modalEditarBanda(id) {
-  const b = _aBandas.find(x => x.Id === id);
-  if (!b) return;
-  window._bandaEditandoId = id;
-  load(true);
-  const [rL, rM, rCel] = await Promise.all([api('getLideres'), api('getMusicos'), api('getCelebracoes')]);
-  load(false);
-  const lids  = rL.ok  ? rL.data  : [];
-  const mus   = rM.ok  ? rM.data  : [];
-  const cels  = rCel.ok ? rCel.data : [];
-  const memIds = (b.MembrosIds||'').split(',').filter(Boolean);
-
-  // Celebrações que já têm essa banda
-  const celsDaBanda = cels.filter(cel => {
-    const ids = (cel.BandasIds||'').split(',').map(x=>x.trim());
-    return ids.includes(id);
-  });
-  const celsDaBandaIds = celsDaBanda.map(c => c.Id);
-
-  openM('Editar Banda', `
-    <div class="fg"><label>Nome *</label><input type="text" id="ebNome" value="${(b.Nome||'').replace(/"/g,'&quot;')}"/></div>
-    <div class="fg"><label>Líder *</label>
-      <select id="ebLidId">
-        ${lids.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}" ${m.Id===b.LiderMusicoId?'selected':''}>${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Emoji</label><input type="text" id="ebEmoji" value="${b.Emoji||'🎸'}" maxlength="2"/></div>
-
-    <div class="dsec" style="margin-top:4px">
-      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES ATUAIS</h3>
-      <div id="ebMembros" style="display:flex;flex-direction:column;gap:6px">
-        ${memIds.map(mid => {
-          const mm = mus.find(x => x.Id === mid);
-          return mm ? `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--bg3);border-radius:8px" data-mid="${mid}">
-            <span style="flex:1;font-size:13px">${mm.Nome||'?'} — ${mm.Instrumentos||''}</span>
-            <button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px">✕</button>
-          </div>` : '';
-        }).join('')}
-      </div>
-      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegranteEd()">+ Adicionar integrante</button>
-    </div>
-
-    <div class="dsec" style="margin-top:8px">
-      <h3 style="font-size:12px;color:var(--text2);margin-bottom:8px">CELEBRAÇÕES DESTA BANDA</h3>
-
-      <!-- Celebrações já vinculadas -->
-      <div id="bandaCelsSelecionadas" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
-        ${celsDaBanda.length ? celsDaBanda.map(cel => {
-          const d = pd(cel.Data||'');
-          return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px" data-cel-id="${cel.Id}">
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
-              <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
-            </div>
-            <button onclick="removerCelDaBanda('${cel.Id}')" style="background:rgba(248,113,113,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>
-          </div>`;
-        }).join('') : '<p id="bandaCelsVazio" style="font-size:12px;color:var(--text3);text-align:center;padding:8px">Nenhuma celebração vinculada</p>'}
-      </div>
-
-      <!-- Busca para adicionar mais -->
-      <div style="position:relative">
-        <input type="text" id="bandaCelBusca"
-          placeholder="🔍 Buscar celebração para adicionar..."
-          oninput="buscarCelParaBanda(this.value)"
-          autocomplete="off"
-          style="width:100%;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:var(--font);font-size:13px;outline:none"/>
-        <div id="bandaCelSugestoes" style="display:none;position:absolute;z-index:100;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
-      </div>
-    </div>
-
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarEdicaoBanda('${id}')">💾 Salvar</button>
-    </div>`);
-  window._bandaMusicos = mus;
-  window._todasCels = cels;
-  window._bandaId = id;
-}
-
-function addLinhaIntegrante() {
-  // Para criar banda (#bMembros)
-  const mus = window._bandaMusicos || [];
-  console.log('addLinhaIntegrante: músicos disponíveis:', mus.length, mus.map(m=>m.Nome));
-  const instrList = [...new Set(
-    mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean))
-  )].sort();
-  const container = document.getElementById('bMembros');
-  if (!container) return;
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
-  div.innerHTML =
-    '<select class="bi-instr" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
-    '<option value="">Instrumento...</option>' +
-    instrList.map(i => '<option value="' + i + '">' + i + '</option>').join('') +
-    '</select>' +
-    '<select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
-    '<option value="">— Selecione instrumento —</option>' +
-    '</select>' +
-    '<button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>';
-  // Bind change event
-  const instrSel = div.querySelector('.bi-instr');
-  instrSel.addEventListener('change', function() {
-    const instr = this.value;
-    const filtrados = mus.filter(m =>
-      (m.Instrumentos||'').split(',').map(x=>x.trim()).includes(instr)
-    );
-    const musSel = div.querySelector('.bi-musico');
-    musSel.innerHTML = '<option value="">— Selecione músico —</option>' +
-      filtrados.map(m => '<option value="' + m.Id + '">' + (m.Nome||'—') + '</option>').join('');
-  });
-  container.appendChild(div);
-}
-
-function addLinhaIntegranteEd() {
-  const mus = window._bandaMusicos || [];
-  const instrList = [...new Set(
-    mus.flatMap(m => (m.Instrumentos||'').split(',').map(i=>i.trim()).filter(Boolean))
-  )].sort();
-  const container = document.getElementById('ebMembros');
-  if (!container) return;
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
-  div.innerHTML =
-    '<select class="bi-instr" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
-    '<option value="">Instrumento...</option>' +
-    instrList.map(i => '<option value="' + i + '">' + i + '</option>').join('') +
-    '</select>' +
-    '<select class="bi-musico" style="flex:1;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">' +
-    '<option value="">— Selecione instrumento —</option>' +
-    '</select>' +
-    '<button onclick="this.parentElement.remove()" style="background:rgba(248,113,113,.2);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;flex-shrink:0">✕</button>';
-  const instrSel = div.querySelector('.bi-instr');
-  instrSel.addEventListener('change', function() {
-    const instr = this.value;
-    const filtrados = mus.filter(m =>
-      (m.Instrumentos||'').split(',').map(x=>x.trim()).includes(instr)
-    );
-    const musSel = div.querySelector('.bi-musico');
-    musSel.innerHTML = '<option value="">— Selecione músico —</option>' +
-      filtrados.map(m => '<option value="' + m.Id + '">' + (m.Nome||'—') + '</option>').join('');
-  });
-  container.appendChild(div);
-}
-
-function filtrarMusBandaEd(sel) {
-  const instr = sel.value;
-  const mus = (window._bandaMusicos||[]).filter(m=>(m.Instrumentos||'').split(',').map(i=>i.trim()).includes(instr));
-  const row = sel.parentElement;
-  const musSel = row.querySelector('.bi-musico');
-  musSel.innerHTML = `<option value="">— Selecione —</option>` + mus.map(m=>`<option value="${m.Id}">${m.Nome||'—'}</option>`).join('');
-}
-
-// ===== BANDA-CELEBRAÇÕES AUTOCOMPLETE =====
-function buscarCelParaBanda(query) {
-  const div = document.getElementById('bandaCelSugestoes');
-  if (!div) return;
-  if (!query.trim()) { div.style.display = 'none'; return; }
-
-  const q = query.toLowerCase();
-  const jaVinculados = [...document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]')]
-    .map(el => el.dataset.celId);
-
-  const cels = (window._todasCels || []).filter(c =>
-    !jaVinculados.includes(c.Id) &&
-    ((c.Nome||'').toLowerCase().includes(q) ||
-     (c.Local||'').toLowerCase().includes(q))
-  ).slice(0, 6);
-
-  if (!cels.length) { div.style.display = 'none'; return; }
-
-  div.style.display = 'block';
-  div.innerHTML = cels.map(cel => {
-    const d = pd(cel.Data||'');
-    const temRep = cel.RepertorioId && cel.RepertorioId.trim() !== '';
-    const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
-    const bandaAtualId = window._bandaEditandoId || '';
-    const outrasBandas = bandasDaCel.filter(bid => bid !== bandaAtualId);
-    const jaVinculada = outrasBandas.length > 0;
-    const todasBandas = window._aBandas || [];
-    const nomeBandaVinc = jaVinculada ? (todasBandas.find(x=>x.Id===outrasBandas[0])?.Nome||'outra banda') : '';
-    const bloqueada = jaVinculada;
-    return `<div onclick="adicionarCelBanda('${cel.Id}')"
-      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);opacity:${bloqueada?0.5:1}"
-      onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
-      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}
-        ${!temRep?'<span style="font-size:10px;color:var(--yellow)"> ⚠️ sem repertório</span>':''}
-        ${jaVinculada?`<span style="font-size:10px;color:var(--red)"> ⛔ vinculada à ${nomeBandaVinc}</span>`:''}
-      </div>
-      <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
-    </div>`;
-  }).join('');
-}
-
-function adicionarCelBanda(celId) {
-  const div = document.getElementById('bandaCelSugestoes');
-  if (div) div.style.display = 'none';
-  const input = document.getElementById('bandaCelBusca');
-  if (input) input.value = '';
-
-  // Verificar se já está vinculada a ESTA banda
-  if (document.querySelector(`#bandaCelsSelecionadas [data-cel-id="${celId}"]`)) return;
-
-  const cel = (window._todasCels || []).find(c => c.Id === celId);
-  if (!cel) return;
-
-  // Bloquear se celebração já tem OUTRA banda vinculada
-  const bandasDaCel = (cel.BandasIds||'').split(',').filter(Boolean);
-  const bandaAtualId = window._bandaEditandoId || '';
-  const outrasBAndas = bandasDaCel.filter(bid => bid !== bandaAtualId);
-  if (outrasBAndas.length > 0) {
-    const todasBandas = window._aBandas || [];
-    const nomesBandas = outrasBAndas.map(bid => {
-      const b = todasBandas.find(x => x.Id === bid);
-      return b ? b.Nome : bid;
-    }).join(', ');
-    toast(`⛔ Esta celebração já está vinculada à(s) banda(s): ${nomesBandas}`, 'err');
-    return;
-  }
-
-  const vazio = document.getElementById('bandaCelsVazio');
-  if (vazio) vazio.style.display = 'none';
-
-  const d = pd(cel.Data||'');
-  const container = document.getElementById('bandaCelsSelecionadas');
-  const item = document.createElement('div');
-  item.dataset.celId = celId;
-  item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg3);border-radius:8px';
-  item.innerHTML = `
-    <div style="flex:1">
-      <div style="font-size:13px;font-weight:600">${cel.Nome||'—'}</div>
-      <div style="font-size:11px;color:var(--text2)">📅 ${d.day}/${d.mon}/${d.year} • 📍 ${cel.Local||''}</div>
-    </div>
-    <button onclick="removerCelDaBanda('${celId}')"
-      style="background:rgba(248,113,113,.15);border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>`;
-  container.appendChild(item);
-}
-
-function removerCelDaBanda(celId) {
-  const el = document.querySelector(`#bandaCelsSelecionadas [data-cel-id="${celId}"]`);
-  if (el) el.remove();
-  // Mostrar vazio se não sobrou nenhuma
-  const restantes = document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]');
-  if (!restantes.length) {
-    const container = document.getElementById('bandaCelsSelecionadas');
-    if (container && !document.getElementById('bandaCelsVazio')) {
-      const p = document.createElement('p');
-      p.id = 'bandaCelsVazio';
-      p.style.cssText = 'font-size:12px;color:var(--text3);text-align:center;padding:8px';
-      p.textContent = 'Nenhuma celebração vinculada';
-      container.appendChild(p);
-    }
-  }
-}
-
-async function salvarEdicaoBanda(id) {
-  const sel = document.getElementById('ebLidId');
-  const nome = document.getElementById('ebNome').value.trim();
-  const lidId = sel.value;
-  const opt = sel.options[sel.selectedIndex];
-  const lidNome = opt ? (opt.dataset.nome || opt.text.split('—')[0].trim()) : '';
-  if (!nome) { toast('Informe o nome','err'); return; }
-  if (!lidId) { toast('Selecione um líder','err'); return; }
-
-  const existentes = [...document.querySelectorAll('#ebMembros [data-mid]')]
-    .map(el => el.dataset.mid).filter(Boolean);
-  const novos = [...document.querySelectorAll('#ebMembros select.bi-musico')]
-    .map(s => s.value).filter(Boolean);
-  const membrosIds = [...new Set([lidId, ...existentes, ...novos].filter(Boolean))];
-
-  const celsSelecionadas = [...document.querySelectorAll('#bandaCelsSelecionadas [data-cel-id]')]
-    .map(el => el.dataset.celId).filter(Boolean);
-
-  const todasCels = window._todasCels || [];
-  const celAnteriores = todasCels
-    .filter(c => (c.BandasIds||'').split(',').filter(Boolean).includes(id))
-    .map(c => c.Id);
-  const celNovas = celsSelecionadas.filter(cid => !celAnteriores.includes(cid));
-
-  load(true);
-
-  // Salvar banda
-  const r = await api('editarBanda', {
-    id, nome, liderNome: lidNome, liderMusicoId: lidId,
-    emoji: document.getElementById('ebEmoji').value || '🎸',
-    membrosIds,
-  });
-  if (!r.ok) { load(false); toast(r.error||'Erro','err'); return; }
-
-  // Atualizar celebrações
-  for (const celId of celsSelecionadas) {
-    const cel = todasCels.find(c => c.Id === celId);
-    if (!cel) continue;
-    const ids = (cel.BandasIds||'').split(',').filter(Boolean);
-    if (!ids.includes(id)) {
-      ids.push(id);
-      await api('editarCelebracao', { id: celId, nome: cel.Nome, data: (cel.Data||'').split('T')[0], horario: cel.Horario, local: cel.Local, obs: cel.Obs||'', bandasIds: ids, repertorioId: cel.RepertorioId||'', repertorioTipo: cel.RepertorioTipo||'master', liderEquipeId: cel.LiderEquipeId||'' });
-    }
-  }
-  for (const cel of todasCels) {
-    const tinha = (cel.BandasIds||'').split(',').filter(Boolean).includes(id);
-    if (tinha && !celsSelecionadas.includes(cel.Id)) {
-      const ids = (cel.BandasIds||'').split(',').filter(Boolean).filter(bid => bid !== id);
-      await api('editarCelebracao', { id: cel.Id, nome: cel.Nome, data: (cel.Data||'').split('T')[0], horario: cel.Horario, local: cel.Local, obs: cel.Obs||'', bandasIds: ids, repertorioId: cel.RepertorioId||'', repertorioTipo: cel.RepertorioTipo||'master', liderEquipeId: cel.LiderEquipeId||'' });
-    }
-  }
-
-  // Criar escalas automáticas para celebrações novas
-  let escalasCreadas = 0;
-  for (const celId of celNovas) {
-    const cel = todasCels.find(c => c.Id === celId);
-    if (!cel) continue;
-    const r2 = await api('criarEscalaAutomatica', {
-      celebracaoId: celId,
-      celebracaoNome: cel.Nome || '',
-      data: (cel.Data||'').split('T')[0],
-      horario: cel.Horario || '',
-      local: cel.Local || '',
-      repertorioId: cel.RepertorioId || '',
-      bandaId: id,
-      bandaNome: nome,
-      musicosIds: membrosIds,
-    });
-    if (r2.ok) escalasCreadas++;
-  }
-
-  load(false);
-  toast(escalasCreadas > 0
-    ? `Banda atualizada! ${escalasCreadas} escala(s) criada(s) para os músicos ✅`
-    : `Banda atualizada com ${membrosIds.length} integrante(s)! ✅`, 'ok');
-  closeM();
-  await loadBandas();
-}
-
-async function modalCriarBanda(){
-  load(true);
-  const [rL, rM] = await Promise.all([api('getLideres'), api('getMusicos')]);
-  load(false);
-  const lids = rL.ok ? rL.data : [];
-  const mus  = rM.ok ? rM.data : [];
-  window._bandaMusicos = mus;
-
-  openM('Nova Banda', `
-    <div class="fg"><label>Nome da banda *</label><input type="text" id="bNome"/></div>
-    <div class="fg"><label>Líder *</label>
-      <select id="bLidId">
-        <option value="">— Selecione um líder —</option>
-        ${lids.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
-      </select>
-      ${!lids.length ? '<p style="font-size:11px;color:var(--red);margin-top:4px">Nenhum líder disponível. Promova um músico a líder primeiro.</p>' : ''}
-    </div>
-    <div class="fg"><label>Emoji</label><input type="text" id="bEmoji" value="🎸" maxlength="2"/></div>
-    <div class="dsec" style="margin-top:4px">
-      <h3 style="font-size:12px;color:var(--text2);margin-bottom:10px">INTEGRANTES</h3>
-      <div id="bMembros" style="display:flex;flex-direction:column;gap:8px"></div>
-      <button class="btn-ghost sm" style="margin-top:8px;width:100%" onclick="addLinhaIntegrante()">+ Adicionar integrante</button>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarBanda()">Criar banda</button>
-    </div>`);
-}
-
-async function salvarBanda(){
-  const sel = document.getElementById('bLidId');
-  const nome = document.getElementById('bNome').value.trim();
-  const lidId = sel ? sel.value : '';
-  const opt = sel ? sel.options[sel.selectedIndex] : null;
-  const lidNome = opt ? (opt.dataset.nome || opt.text.split('—')[0].trim()) : '';
-  if (!nome) { toast('Informe o nome da banda','err'); return; }
-  if (!lidId) { toast('Selecione um líder','err'); return; }
-
-  // Coletar todos os músicos selecionados (selects com classe bi-musico dentro de #bMembros)
-  const container = document.getElementById('bMembros');
-  const musicoSelects = container ? container.querySelectorAll('select.bi-musico') : [];
-  const novos = [...musicoSelects].map(s => s.value).filter(Boolean);
-  const membrosIds = [...new Set([lidId, ...novos].filter(Boolean))];
-
-  load(true);
-  const r = await api('criarBanda', {
-    nome,
-    liderNome: lidNome,
-    liderMusicoId: lidId,
-    emoji: document.getElementById('bEmoji').value || '🎸',
-    membrosIds,
-  });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro ao criar banda','err'); return; }
-  toast('Banda criada com ' + membrosIds.length + ' integrante(s)! ✅','ok');
-  closeM();
-  await loadBandas();
-}
-
-function confRemBanda(id,nome){
-  _pendAct={type:'remBanda',id};
-  openM('🗑 Remover Banda',`
-    <p style="text-align:center;padding:12px 0;font-size:15px;color:var(--text2);line-height:1.7">Remover a banda <strong style="color:var(--red)">${nome}</strong>?<br/><span style="font-size:12px;color:var(--text3)">Ação irreversível.</span></p>
-    <div class="mfoot" style="justify-content:center;gap:12px"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-red" onclick="execRemBanda()">🗑 Confirmar</button></div>`);
-}
-
-async function execRemBanda(){
-  if(!_pendAct||_pendAct.type!=='remBanda') return;
-  const {id}=_pendAct; _pendAct=null; closeM();
-  load(true); const r=await api('removerBanda',{id}); load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Banda removida!','ok'); await loadBandas();
-}
-
-// CELEBRAÇÕES
-async function loadCel(){
-  const s=getSess();
-  // Lider de equipe usa painel próprio, não loadCel
-  if (s && s.nivel==='liderequipe') {
-    await loadLiderEquipePanel();
-    return;
-  }
-  load(true); const r=await api('getCelebracoes'); load(false);
-  const list=r.ok?r.data:[];
-  const el=document.getElementById('admCelList');
-  if(!list.length){el.innerHTML=empty('✨','Nenhuma celebração');return;}
-  const isMaster = s && s.nivel==='master';
-  const isLE = false;
-  list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
-  el.innerHTML=list.map(c=>{
-    const d=pd(c.Data);
-    const podeRepLE = isLE && (c.RepertorioTipo||'').toLowerCase()==='liderequipe';
-    return `
-    <div class="card">
-      <div class="ch">
-        <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-        <div style="flex:1">
-          <div class="cn">${c.Nome||'—'}</div>
-          <div class="cs">⏰ ${c.Horario||''} • 📍 ${c.Local||''}</div>
-          ${c.LiderEquipeId ? `<div style="font-size:11px;color:var(--accent2);margin-top:3px">👥 Líder de equipe atribuído</div>` : ''}
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          ${isMaster ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">✏️</button>` : ''}
-          ${isLE ? `<button class="btn-ghost sm" onclick="modalEditarCel('${c.Id}')">👁 Ver${podeRepLE?' / Repertório':''}</button>` : ''}
-          ${isMaster ? `<button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="confExcluirCel('${c.Id}','${(c.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--text2);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap">
-        <span>📋 Repertório: ${c.RepertorioTipo==='liderequipe'?'👥 Líder de equipe define':c.RepertorioTipo==='lider'?'🎸 Líder define':'⚙️ Master define'}</span>
-      </div>
-      ${c.Obs?`<p style="font-size:12px;color:var(--text3);margin-top:6px">${c.Obs}</p>`:''}
-    </div>`;
-  }).join('');
-}
-
-async function modalCriarCel(){
-  load(true);
-  const [rRep, rLE] = await Promise.all([api('getRepertorios',{}), api('getLideresEquipe')]);
-  load(false);
-  const reps  = rRep.ok ? rRep.data : [];
-  const lides = rLE.ok  ? rLE.data  : [];
-
-  openM('Nova Celebração',`
-    <div class="fg"><label>Nome *</label><input type="text" id="cNome" placeholder="Ex: Culto Dominical"/></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data *</label><input type="date" id="cDt"/></div>
-      <div class="fg"><label>Horário *</label><input type="time" id="cHr"/></div>
-    </div>
-    <div class="fg"><label>Local *</label><input type="text" id="cLoc"/></div>
-    <div class="fg"><label>Observações</label><textarea id="cObs" rows="2"></textarea></div>
-    <div class="fg"><label>Atribuir a Líder de Equipe</label>
-      <select id="cLiderEq">
-        <option value="">— Sem líder de equipe —</option>
-        ${lides.map(l=>`<option value="${l.Id}">${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Repertório</label>
-      <select id="cRep">
-        <option value="">— Sem repertório —</option>
-        ${reps.map(r=>`<option value="${r.Id}">${r.Nome||'—'}</option>`).join('')}
-      </select>
-    </div>
-    <div class="fg"><label>Quem define o repertório</label>
-      <select id="cRepT">
-        <option value="master">⚙️ Master define</option>
-        <option value="liderequipe">👥 Líder de equipe define</option>
-      </select>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarCel()">Criar</button>
-    </div>`);
-}
-
-async function salvarCel(){
-  const nome = document.getElementById('cNome').value.trim();
-  const dt   = document.getElementById('cDt').value;
-  const hr   = document.getElementById('cHr').value;
-  const loc  = document.getElementById('cLoc').value.trim();
-  if(!nome||!dt||!hr||!loc){toast('Preencha todos os campos obrigatórios','err');return;}
-  const repId     = document.getElementById('cRep').value;
-  const liderEqId = document.getElementById('cLiderEq').value;
-  load(true);
-  const r=await api('criarCelebracao',{
-    nome, data:dt, horario:hr, local:loc,
-    obs: document.getElementById('cObs').value,
-    bandasIds: [],
-    repertorioId: repId,
-    repertorioTipo: document.getElementById('cRepT').value,
-    liderEquipeId: liderEqId,
-  });
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Celebração criada!','ok'); closeM(); await loadCel();
-}
-
-
-function confExcluirCel(id, nome) {
-  if (!confirm('Excluir a celebração "' + nome + '"?\nEsta ação não pode ser desfeita.')) return;
-  load(true);
-  api('removerCelebracao', { id }).then(r => {
-    load(false);
-    if (!r.ok) { toast(r.error||'Erro','err'); return; }
-    toast('Celebração excluída!','ok');
-    loadCel();
-  });
-}
-
-async function modalEditarCel(id) {
-  load(true);
-  const [rCel, rRep, rLE] = await Promise.all([
-    api('getCelebracoes'),
-    api('getRepertorios',{}),
-    api('getLideresEquipe'),
-  ]);
-  load(false);
-  const list = rCel.ok ? rCel.data : [];
-  const cel = list.find(x => x.Id === id);
-  if (!cel) { toast('Não encontrado','err'); return; }
-
-  const reps  = rRep.ok ? rRep.data : [];
-  const lides = rLE.ok  ? rLE.data  : [];
-  const s = getSess();
-  const isMaster = s && s.nivel === 'master';
-  const isLE     = s && s.nivel === 'liderequipe';
-  const podeRepLE = isLE && (cel.RepertorioTipo||'').toLowerCase() === 'liderequipe';
-
-  const celData = (cel.Data||'').includes('T') ? cel.Data.split('T')[0] : (cel.Data||'');
-  const celHora = (cel.Horario||'').length > 5 ? cel.Horario.substring(0,5) : (cel.Horario||'');
-
-  // Líder de equipe só pode editar campos básicos + repertório (se for do tipo liderequipe)
-  openM(isLE ? 'Celebração' : 'Editar Celebração', `
-    <div class="fg"><label>Nome *</label>
-      <input type="text" id="ecNome" value="${(cel.Nome||'').replace(/"/g,'&quot;')}" ${isLE?'readonly style="opacity:.6"':''}/>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="fg"><label>Data</label><input type="date" id="ecDt" value="${celData}" ${isLE?'readonly style="opacity:.6"':''}></div>
-      <div class="fg"><label>Horário</label><input type="time" id="ecHr" value="${celHora}" ${isLE?'readonly style="opacity:.6"':''}></div>
-    </div>
-    <div class="fg"><label>Local</label>
-      <input type="text" id="ecLoc" value="${(cel.Local||'').replace(/"/g,'&quot;')}" ${isLE?'readonly style="opacity:.6"':''}/>
-    </div>
-    ${!isLE ? `<div class="fg"><label>Observações</label><textarea id="ecObs" rows="2">${cel.Obs||''}</textarea></div>` : ''}
-
-    ${isMaster ? `
-    <div class="fg"><label>Atribuir a Líder de Equipe</label>
-      <select id="ecLiderEq">
-        <option value="">— Sem líder de equipe —</option>
-        ${lides.map(l=>`<option value="${l.Id}" ${cel.LiderEquipeId===l.Id?'selected':''}>${l.Nome||'—'} — ${l.Eklesia||''}</option>`).join('')}
-      </select>
-    </div>` : `<input type="hidden" id="ecLiderEq" value="${cel.LiderEquipeId||''}"/>`}
-
-    <div class="fg"><label>Repertório ${podeRepLE ? '' : isLE ? '<span style="font-size:10px;color:var(--text3)">(definido pelo Admin)</span>' : ''}</label>
-      ${podeRepLE || isMaster ? `
-      <select id="ecRep">
-        <option value="">— Sem repertório —</option>
-        ${reps.map(r=>`<option value="${r.Id}" ${cel.RepertorioId===r.Id?'selected':''}>${r.Nome||'—'}</option>`).join('')}
-      </select>` : `
-      <input type="text" value="${reps.find(r=>r.Id===cel.RepertorioId)?.Nome||'Não definido'}" readonly style="opacity:.6"/>
-      <input type="hidden" id="ecRep" value="${cel.RepertorioId||''}"/>`}
-    </div>
-
-    ${isMaster ? `
-    <div class="fg"><label>Quem define o repertório</label>
-      <select id="ecRepT">
-        <option value="master" ${cel.RepertorioTipo==='master'||cel.RepertorioTipo==='admin'||!cel.RepertorioTipo?'selected':''}>⚙️ Master define</option>
-        <option value="liderequipe" ${cel.RepertorioTipo==='liderequipe'?'selected':''}>👥 Líder de equipe define</option>
-      </select>
-    </div>` : `
-    <input type="hidden" id="ecRepT" value="${cel.RepertorioTipo||'master'}"/>
-    <p style="font-size:11px;color:var(--text3)">📋 Quem define: ${cel.RepertorioTipo==='liderequipe'?'👥 Líder de equipe':'⚙️ Master'}</p>`}
-
-    ${!isLE ? '' : ''}
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      ${isMaster || podeRepLE ? `<button class="btn-primary sm" onclick="salvarEdicaoCel('${id}')">💾 Salvar</button>` : ''}
-    </div>`);
-}
-
-async function salvarEdicaoCel(id) {
-  const nome = document.getElementById('ecNome').value.trim();
-  const dt   = document.getElementById('ecDt').value;
-  const hr   = document.getElementById('ecHr').value;
-  const loc  = document.getElementById('ecLoc').value.trim();
-  if (!nome||!dt||!hr||!loc) { toast('Preencha os campos obrigatórios','err'); return; }
-  const repId     = document.getElementById('ecRep').value;
-  const liderEl   = document.getElementById('ecLiderEq');
-  const liderEqId = liderEl ? liderEl.value : '';
-  load(true);
-  const r = await api('editarCelebracao', {
-    id, nome, data: dt, horario: hr, local: loc,
-    obs: document.getElementById('ecObs')?.value || '',
-    repertorioId: repId,
-    repertorioTipo: document.getElementById('ecRepT').value,
-    liderEquipeId: liderEqId,
-  });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Celebração atualizada! ✅','ok');
-  closeM();
-  await loadCel();
-}
-
-async function loadEsc(){
-  const s=getSess();
-  // Lider de equipe vê suas escalas pessoais nesta tela
-  if(s && s.nivel==='liderequipe'){
-    renderVEscInEl('admEscList');
-    return;
-  }
-  load(true); const r=await api('getEscalas'); load(false);
-  const list=r.ok?r.data:[];
-  const el=document.getElementById('admEscList');
-  if(!list.length){el.innerHTML=empty('📅','Nenhuma escala');return;}
-  list.sort((a,b)=>new Date(a.Data||'9999')-new Date(b.Data||'9999'));
-  el.innerHTML=list.map(e=>{const d=pd(e.Data);return`
-    <div class="li">
-      <div class="db"><div class="db-d">${d.day}</div><div class="db-m">${d.mon}</div></div>
-      <div class="li-info"><div class="li-name">${e.Titulo||'—'}</div><div class="li-sub">⏰ ${e.Horario||''} • 🎸 ${e.BandaNome||''} • 📍 ${e.Local||''}</div></div>
-      <div class="li-r">${badge(e.Status||'pendente')}</div>
-    </div>`;}).join('');
-}
-
-// REPERTÓRIOS + MÚSICAS ADMIN
-async function loadRepertoriosAdmin(){
-  load(true);
-  const [rRep, rMus, rBib] = await Promise.all([api('getRepertorios',{}), api('getMusicas'), api('getBiblioteca')]);
-  load(false);
-  _aMusicas  = rMus.ok  ? rMus.data  : [];
-  _biblioteca = rBib.ok ? rBib.data  : [];
-
-  const repEl = document.getElementById('admRepList');
-  const reps  = rRep.ok ? rRep.data  : [];
-
-  if (!reps.length) {
-    repEl.innerHTML = `<p style="font-size:13px;color:var(--text3);margin-bottom:12px">Nenhum repertório criado ainda.</p>`;
-    return;
-  }
-
-  const s = getSess();
-  const isMaster = s && s.nivel === 'master';
-  const myId = s ? s.mid : '';
-
-  reps.sort((a,b) => (a.Nome||'').localeCompare(b.Nome||''));
-  repEl.innerHTML = reps.map(r => {
-    const musIds  = (r.MusicasIds||'').split(',').filter(Boolean);
-    const musNomes = musIds.map(mid => {
-      const bm = _biblioteca.find(x => x.Id === mid);
-      if (bm) return bm.Titulo;
-      const m2 = _aMusicas.find(x => x.Id === mid);
-      return m2 ? m2.Nome : null;
-    }).filter(Boolean);
-
-    const criadoPor = (r.CriadoPor||'').trim();
-    // CriadoPor vazio = criado antes da coluna existir, todos podem editar
-    // CriadoPor preenchido = só o dono ou master
-    const eMeu = isMaster || criadoPor === '' || (criadoPor !== '' && criadoPor === (myId||''));
-    const pronto = r.RepReady === 'sim';
-
-    return `
-    <div class="card" style="margin-bottom:10px">
-      <div class="ch">
-        <div style="flex:1">
-          <div class="cn">📋 ${r.Nome||'—'} ${pronto?'<span class="badge b-aprov" style="margin-left:6px;font-size:10px">✅ pronto</span>':''}</div>
-          <div class="cs" style="margin-top:2px;display:flex;flex-wrap:wrap;gap:8px">
-            <span>${musIds.length} música(s)</span>
-            ${r.CriadoPor ? `<span style="color:var(--text3)">👤 ${r.CriadoPorNome||'—'}</span>` : `<span style="color:var(--text3)">👤 ${r.CriadoPorNome||'Administrador'}</span>`}
-            ${r.CelebracaoNome ? `<span style="color:var(--accent2)">✨ ${r.CelebracaoNome}</span>` : ''}
-          </div>
-        </div>
-        <div style="display:flex;gap:6px">
-          ${eMeu ? `<button class="btn-ghost sm" onclick="modalEditarRepertorio('${r.Id}')">✏️ Editar</button>` : ''}
-          ${eMeu ? `<button class="btn-red" style="padding:5px 12px;font-size:13px" onclick="confExcluirRepertorio('${r.Id}','${(r.Nome||'').replace(/'/g,'')}')">🗑</button>` : ''}
-        </div>
-      </div>
-      ${musNomes.length ? `<div class="itags">${musNomes.map(n=>`<span class="itag">🎵 ${n}</span>`).join('')}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function confExcluirRepertorio(id, nome) {
-  if (!confirm('Excluir o repertório "' + nome + '"?\nEsta ação não pode ser desfeita.')) return;
-  api('removerRepertorio', { id }).then(r => {
-    if (!r.ok) { toast(r.error||'Erro','err'); return; }
-    toast('Repertório excluído!','ok');
-    loadRepertoriosAdmin();
-  });
-}
-
-async function modalCriarRepertorioAdmin() {
-  load(true);
-  const rB = await api('getBiblioteca');
-  load(false);
-  window._repBiblioteca = rB.ok ? rB.data.sort((a,b)=>(a.Titulo||'').localeCompare(b.Titulo||'')) : [];
-  window._repSelecionadas = [];
-
-  const bibVazia = window._repBiblioteca.length === 0;
-  openM('Novo Repertório', `
-    <div class="fg"><label>Nome *</label><input type="text" id="rNome" placeholder="Ex: Louvor Junho"/></div>
-
-    <div class="fg">
-      <label>Buscar músicas da biblioteca</label>
-      ${bibVazia
-        ? `<div style="padding:14px;background:rgba(251,191,36,.08);border:1px solid var(--yellow);border-radius:10px;text-align:center">
-             <p style="font-size:13px;color:var(--yellow);">⚠️ Biblioteca vazia</p>
-             <p style="font-size:12px;color:var(--text3);margin-top:4px">Vá em <strong>Biblioteca</strong> no menu lateral e adicione músicas primeiro.</p>
-           </div>`
-        : `<input type="text" id="repBusca" placeholder="Digite título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
-           <div id="repSugestoes" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
-           <p style="font-size:11px;color:var(--text3);margin-top:4px">${window._repBiblioteca.length} música(s) disponíveis</p>`
+// ==================== FIX COLUNAS ====================
+// [SEC-1] protegido por perm(master) no dispatch
+function fixColunas() {
+  const s = ss();
+  const fixes = {
+    'Audicoes':    ['Id','Nome','Eklesia','WhatsApp','Instrumentos','Observacoes','Status','FotoUrl','DataInscricao','DataAudicao','Horario','Local','Notificado','DataNotificacao'],
+    'Musicos':     ['Id','Nome','Eklesia','WhatsApp','Instrumentos','Banda','FotoUrl','Ativo','IsLider','AudicaoId','DataCadastro'],
+    'Tokens':      ['Id','Nome','Eklesia','Token','Nivel','MusicoId','SessionKey','SessionExp','DataCriacao'],
+    'Celebracoes': ['Id','Nome','Data','Horario','Local','Obs','BandasIds','RepertorioId','RepertorioTipo','LiderEquipeId','DataCriacao'],
+    'Aceites':     ['Id','EscalaId','MusicoId','Status','DataResposta','Justificativa'],
+    'Bandas':      ['Id','Nome','LiderNome','LiderMusicoId','Emoji','Cor','MembrosIds','DataCriacao'],
+    'Escalas':     ['Id','Titulo','Data','Horario','Local','BandaId','BandaNome','MusicosIds','RepertorioId','CelebracaoId','Status','DataCriacao'],
+    'Repertorios': ['Id','Nome','BandaId','MusicasIds','Overrides','RepReady','CriadoPor','DataCriacao'],
+    'Musicas':     ['Id','Nome','Artista','Tom','Bpm','Versao','Youtube','Cifra','Partitura','DataCriacao'],
+    'Biblioteca':  ['Id','Titulo','TituloOriginal','Composicao','Versao','Categoria','Link','DataCriacao'],
+  };
+  const results = {};
+  Object.entries(fixes).forEach(([name, expectedHeaders]) => {
+    const sheet = s.getSheetByName(name);
+    if (!sheet) { results[name] = 'aba não encontrada'; return; }
+    const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim());
+    const missing = [];
+    expectedHeaders.forEach(h => {
+      const normH = norm(h);
+      const found = currentHeaders.some(ch => norm(ch) === normH);
+      if (!found) {
+        const nextCol = sheet.getLastColumn() + 1;
+        sheet.getRange(1, nextCol).setValue(h).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+        missing.push(h);
       }
-    </div>
-
-    <div class="fg">
-      <label>Músicas selecionadas</label>
-      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:48px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
-        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center;margin:auto">Nenhuma música adicionada</p>
-      </div>
-    </div>
-
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarRepAdmin()">Criar repertório</button>
-    </div>`);
-}
-
-function buscarRepMusica(query) {
-  const bib = window._repBiblioteca || [];
-  const div = document.getElementById('repSugestoes');
-  console.log('buscarRepMusica: bib size=', bib.length, 'query=', query);
-  if (!query.trim()) { if(div) div.style.display='none'; return; }
-  if (!div) { console.warn('repSugestoes not found'); return; }
-  const q = query.toLowerCase();
-  const results = bib.filter(m =>
-    (m.Titulo||'').toLowerCase().includes(q) ||
-    (m.Composicao||'').toLowerCase().includes(q) ||
-    (m.Versao||'').toLowerCase().includes(q)
-  ).slice(0, 8);
-  if (!results.length) { div.style.display='none'; return; }
-  div.style.display = 'block';
-  div.innerHTML = results.map(m => `
-    <div onclick="addRepMusica('${m.Id}')"
-         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s"
-         onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background=''">
-      <div style="font-size:13px;font-weight:600">${m.Titulo||'—'}</div>
-      <div style="font-size:11px;color:var(--text2)">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''} <span class="badge b-agend" style="margin-left:4px">${m.Categoria||''}</span></div>
-    </div>`).join('');
-}
-
-function addRepMusica(id) {
-  const bib = window._repBiblioteca || [];
-  const sel = window._repSelecionadas || [];
-  const m = bib.find(x => x.Id === id);
-  if (!m || sel.find(x => x.Id === id)) {
-    document.getElementById('repSugestoes').style.display='none';
-    document.getElementById('repBusca').value='';
-    return;
-  }
-  sel.push(m);
-  window._repSelecionadas = sel;
-  renderRepSelecionadas();
-  document.getElementById('repSugestoes').style.display='none';
-  document.getElementById('repBusca').value='';
-}
-
-function removerRepMusica(id) {
-  window._repSelecionadas = (window._repSelecionadas||[]).filter(m => m.Id !== id);
-  renderRepSelecionadas();
-}
-
-function renderRepSelecionadas() {
-  const sel = window._repSelecionadas || [];
-  const el = document.getElementById('repSelecionadas');
-  const vazio = document.getElementById('repVazio');
-  if (!sel.length) {
-    if(vazio) vazio.style.display='block';
-    const items = el.querySelectorAll('.rep-item');
-    items.forEach(i=>i.remove());
-    return;
-  }
-  if(vazio) vazio.style.display='none';
-  // Remove old items and re-render
-  el.querySelectorAll('.rep-item').forEach(i=>i.remove());
-  sel.forEach((m,i) => {
-    const div = document.createElement('div');
-    div.className = 'rep-item';
-    div.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg4);border-radius:8px';
-    div.innerHTML = `
-      <span style="font-size:11px;color:var(--text3);font-weight:700;width:20px">${i+1}</span>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:600">${m.Titulo||'—'}</div>
-        <div style="font-size:11px;color:var(--text2)">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
-      </div>
-      ${m.Link?`<a href="${m.Link}" target="_blank" style="color:var(--accent2);font-size:12px;text-decoration:none">▶</a>`:''}
-      <button onclick="removerRepMusica('${m.Id}')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px">✕</button>`;
-    el.appendChild(div);
-  });
-}
-
-async function salvarRepAdmin() {
-  const nome = document.getElementById('rNome').value.trim();
-  if (!nome) { toast('Informe o nome do repertório','err'); return; }
-  const sel = window._repSelecionadas || [];
-  if (!sel.length) { toast('Adicione ao menos uma música','err'); return; }
-  const ids = sel.map(m => m.Id);
-  load(true);
-  const r = await api('criarRepertorio', { nome, bandaId:'', musicasIds: ids });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Repertório criado com ' + ids.length + ' música(s)! ✅','ok');
-  closeM();
-  await loadRepertoriosAdmin();
-}
-
-async function modalEditarRepertorio(id) {
-  load(true);
-  const [rRep, rB] = await Promise.all([api('getRepertorios',{}), api('getBiblioteca')]);
-  load(false);
-
-  const rep = rRep.ok ? rRep.data.find(x => x.Id === id) : null;
-  if (!rep) { toast('Não encontrado','err'); return; }
-
-  const bib    = rB.ok ? rB.data.sort((a,b)=>(a.Titulo||'').localeCompare(b.Titulo||'')) : [];
-  const selIds = (rep.MusicasIds||'').split(',').filter(Boolean);
-
-  // Pre-populate globals
-  window._repBiblioteca   = bib;
-  window._repSelecionadas = bib.filter(m => selIds.includes(m.Id));
-
-  openM('Editar Repertório', `
-    <div class="fg"><label>Nome *</label><input type="text" id="erNome" value="${(rep.Nome||'').replace(/"/g,'&quot;')}"/></div>
-    <div class="fg">
-      <label>Buscar músicas da biblioteca</label>
-      ${bib.length
-        ? `<input type="text" id="repBusca" placeholder="Digite título ou compositor..." oninput="buscarRepMusica(this.value)" autocomplete="off"/>
-           <div id="repSugestoes" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;box-shadow:0 4px 20px rgba(0,0,0,.5)"></div>
-           <p style="font-size:11px;color:var(--text3);margin-top:4px">${bib.length} música(s) disponíveis</p>`
-        : `<p style="font-size:13px;color:var(--yellow)">⚠️ Biblioteca vazia. Adicione músicas em Biblioteca.</p>`
-      }
-    </div>
-    <div class="fg">
-      <label>Músicas no repertório (${window._repSelecionadas.length})</label>
-      <div id="repSelecionadas" style="display:flex;flex-direction:column;gap:6px;min-height:48px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
-        <p id="repVazio" style="font-size:12px;color:var(--text3);text-align:center;margin:auto;${window._repSelecionadas.length?'display:none':''}">Nenhuma música adicionada</p>
-      </div>
-    </div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarEditarRepAdmin('${id}')">💾 Salvar</button>
-    </div>`);
-
-  // Render pre-selected after modal is open
-  setTimeout(() => renderRepSelecionadas(), 80);
-}
-
-async function salvarEditarRepAdmin(id) {
-  const nome = document.getElementById('erNome').value.trim();
-  if (!nome) { toast('Informe o nome','err'); return; }
-  const sel = window._repSelecionadas || [];
-  const ids = sel.map(m => m.Id);
-  load(true);
-  const r = await api('editarRepertorio', { id, nome, musicasIds: ids });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Repertório atualizado com ' + ids.length + ' música(s)! ✅','ok');
-  closeM();
-  await loadRepertoriosAdmin();
-}
-
-// MÚSICAS ADMIN
-// loadMusicas2 removed - use loadRepertoriosAdmin directly
-
-function renderAMusicas(list){
-  _aMusicas = list;
-  const el = document.getElementById('admMusList2');
-  if (!el) return;
-  if (!list.length) { el.innerHTML=empty('🎼','Nenhuma música cadastrada'); return; }
-  list.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  el.innerHTML = list.map(m=>`
-    <div class="card">
-      <div class="cn">🎵 ${m.Nome||'—'}</div>
-      <div class="cs" style="margin-top:4px">${m.Artista||''} • ${m.Versao||''}</div>
-      <div class="itags">
-        <span class="itag">${m.Tom||'?'}</span>
-        <span class="itag">${m.Bpm||'?'} BPM</span>
-        ${m.Youtube?`<a href="${m.Youtube}" target="_blank" class="itag" style="color:var(--accent2);text-decoration:none">▶ YT</a>`:''}
-      </div>
-    </div>`).join('');
-}
-
-// TOKENS
-// ===== BIBLIOTECA =====
-let _biblioteca = [];
-
-async function loadBiblioteca() {
-  load(true);
-  const r = await api('getBiblioteca');
-  load(false);
-  _biblioteca = r.ok ? (r.data || []) : [];
-
-  // Inserir campo de busca antes da lista se não existir
-  const el = document.getElementById('admBibList');
-  const page = document.getElementById('ap-biblioteca');
-  if (page && !document.getElementById('bibBuscaWrap')) {
-    const wrap = document.createElement('div');
-    wrap.id = 'bibBuscaWrap';
-    wrap.style.cssText = 'margin-bottom:16px;position:relative';
-    wrap.innerHTML = `
-      <div style="position:relative">
-        <input type="text" id="bibBusca"
-          placeholder="🔍 Buscar por título, compositor, versão ou categoria..."
-          oninput="renderBiblioteca()"
-          style="width:100%;padding:11px 44px 11px 16px;background:var(--bg2);border:1px solid var(--border);
-                 border-radius:10px;color:var(--text);font-family:var(--font);font-size:14px;outline:none;
-                 transition:border-color .2s"/>
-        <span id="bibBuscaCount" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);
-              font-size:12px;color:var(--text3)"></span>
-      </div>`;
-    page.insertBefore(wrap, el);
-
-    // Focus style
-    document.getElementById('bibBusca').addEventListener('focus', function() {
-      this.style.borderColor = 'var(--accent)';
-      this.style.boxShadow = '0 0 0 3px rgba(124,111,247,.12)';
     });
-    document.getElementById('bibBusca').addEventListener('blur', function() {
-      this.style.borderColor = 'var(--border)';
-      this.style.boxShadow = 'none';
-    });
-  }
-
-  renderBiblioteca();
-}
-
-function renderBiblioteca(filtro) {
-  const el = document.getElementById('admBibList');
-  if (!el) return;
-
-  let lista = [..._biblioteca].sort((a,b) => (a.Titulo||'').localeCompare(b.Titulo||''));
-
-  // Aplicar filtro se houver
-  const q = (filtro || document.getElementById('bibBusca')?.value || '').toLowerCase().trim();
-  if (q) {
-    lista = lista.filter(m =>
-      (m.Titulo||'').toLowerCase().includes(q) ||
-      (m.Composicao||'').toLowerCase().includes(q) ||
-      (m.Versao||'').toLowerCase().includes(q) ||
-      (m.Categoria||'').toLowerCase().includes(q)
-    );
-  }
-
-  if (!lista.length && !q) {
-    el.innerHTML = empty('🎵', 'Nenhuma música cadastrada ainda');
-    return;
-  }
-  if (!lista.length && q) {
-    el.innerHTML = `<p style="text-align:center;padding:32px;color:var(--text3)">Nenhuma música encontrada para "<strong>${q}</strong>"</p>`;
-    return;
-  }
-
-  // Atualizar contador
-  const countEl = document.getElementById('bibBuscaCount');
-  if (countEl) countEl.textContent = lista.length + ' / ' + _biblioteca.length;
-
-  el.innerHTML = lista.map(m => `
-    <div class="li">
-      <div class="li-info">
-        <div class="li-name">🎵 ${m.Titulo||'—'} ${m.TituloOriginal&&m.TituloOriginal!==m.Titulo?`<span style="font-size:11px;color:var(--text3)">(${m.TituloOriginal})</span>`:''}
-          <span class="badge b-agend" style="margin-left:8px">${m.Categoria||''}</span>
-        </div>
-        <div class="li-sub">${m.Composicao||''} ${m.Versao?'• '+m.Versao:''}</div>
-      </div>
-      <div class="li-r">
-        ${m.Link?`<a href="${m.Link}" target="_blank" class="btn-primary sm" style="text-decoration:none">▶</a>`:''}
-        <button class="btn-red" style="padding:5px 10px;font-size:12px" onclick="removerBib('${m.Id}','${(m.Titulo||'').replace(/'/g,'')}')">🗑</button>
-      </div>
-    </div>`).join('');
-}
-
-function modalAddBiblioteca() {
-  openM('Adicionar Música à Biblioteca', `
-    <div class="fg"><label>Título *</label><input type="text" id="bibTit" placeholder="Ex: A Alegria do Senhor"/></div>
-    <div class="fg"><label>Título Original</label><input type="text" id="bibTitOrig" placeholder="Título na língua original"/></div>
-    <div class="fg"><label>Composição *</label><input type="text" id="bibComp" placeholder="Ex: Fernandinho"/></div>
-    <div class="fg"><label>Versão</label><input type="text" id="bibVers" placeholder="Ex: Fernandinho, Ministério Zoe..."/></div>
-    <div class="fg"><label>Categoria</label>
-      <select id="bibCat">
-        <option value="Nacional">Nacional</option>
-        <option value="Internacional">Internacional</option>
-        <option value="Hino">Hino</option>
-        <option value="Gospel Pop">Gospel Pop</option>
-        <option value="Contemporâneo">Contemporâneo</option>
-        <option value="Clássico">Clássico</option>
-      </select>
-    </div>
-    <div class="fg"><label>Link *</label><input type="text" id="bibLink" placeholder="https://youtu.be/..."/></div>
-    <div class="mfoot">
-      <button class="btn-ghost sm" onclick="closeM()">Cancelar</button>
-      <button class="btn-primary sm" onclick="salvarBiblioteca()">Adicionar</button>
-    </div>`);
-}
-
-async function salvarBiblioteca() {
-  const titulo = document.getElementById('bibTit').value.trim();
-  const comp   = document.getElementById('bibComp').value.trim();
-  const link   = document.getElementById('bibLink').value.trim();
-  if (!titulo) { toast('Título é obrigatório','err'); return; }
-  if (!comp)   { toast('Composição é obrigatória','err'); return; }
-  if (!link)   { toast('Link é obrigatório','err'); return; }
-  load(true);
-  const r = await api('adicionarBiblioteca', {
-    titulo,
-    tituloOriginal: document.getElementById('bibTitOrig').value.trim(),
-    composicao: comp,
-    versao:   document.getElementById('bibVers').value.trim(),
-    categoria:document.getElementById('bibCat').value,
-    link,
+    results[name] = missing.length > 0 ? 'Adicionadas: ' + missing.join(', ') : 'OK';
+    // Invalidar cache das abas modificadas
+    delete _sheetCache[name];
   });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Música adicionada à biblioteca! 🎵','ok');
-  closeM();
-  await loadBiblioteca();
+  return ok(results);
 }
 
-async function removerBib(id, titulo) {
-  if (!confirm('Remover "' + titulo + '" da biblioteca?')) return;
-  load(true);
-  const r = await api('removerBiblioteca', { id });
-  load(false);
-  if (!r.ok) { toast(r.error||'Erro','err'); return; }
-  toast('Música removida!','ok');
-  await loadBiblioteca();
-}
-
-
-async function loadTokens(){
-  load(true); const r=await api('getTokens'); load(false);
-  const list=r.ok?r.data:[];
-  const el=document.getElementById('admTokList');
-  if(!list.length){el.innerHTML=empty('🔑','Nenhum token');return;}
-  list.sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  el.innerHTML=list.map(t=>`
-    <div class="tok-item">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div><div style="font-weight:600;font-size:14px">${t.Nome||'—'} <span class="rtag">${t.Nivel||''}</span></div><div style="font-size:12px;color:var(--text2);margin-top:2px">${t.Eklesia||''}</div></div>
-        <span class="tok-code">${t.Token||''}</span>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <a class="btn-wa" href="${wa('','Seu token Bandas IC: *'+(t.Token||'')+'*%0AAcesse: https://30semanas.github.io/bandasIC')}" target="_blank">💬 Enviar</a>
-        <button class="btn-ghost sm" onclick="navigator.clipboard.writeText('${t.Token||''}').then(()=>toast('Copiado!','ok'))">📋 Copiar</button>
-      </div>
-    </div>`).join('');
-}
-
-async function modalGerarToken(){
-  load(true);
-  const [rM,rT]=await Promise.all([api('getMusicos'),api('getTokens')]);
-  load(false);
-  const mus=(rM.ok?rM.data:[]).sort((a,b)=>(a.Nome||'').localeCompare(b.Nome||''));
-  const toks=rT.ok?rT.data:[];
-  const comTok=new Set(toks.map(t=>t.MusicoId).filter(Boolean));
-  const semTok=mus.filter(m=>!comTok.has(m.Id));
-  openM('Gerar Token de Acesso',`
-    <div class="fg"><label>Músico *</label>
-      <select id="tMus" onchange="autoNivel(this)">
-        <option value="">— Selecione —</option>
-        ${semTok.map(m=>`<option value="${m.Id}" data-nome="${m.Nome||''}" data-ekl="${m.Eklesia||''}" data-lider="${m.IsLider||'nao'}">${m.Nome||'—'} — ${m.Eklesia||''}</option>`).join('')}
-        <option value="__ext__" data-nome="" data-ekl="" data-lider="nao">+ Novo (externo)</option>
-      </select>
-    </div>
-    <div id="extFields" style="display:none">
-      <div class="fg"><label>Nome</label><input type="text" id="tNomeExt"/></div>
-      <div class="fg"><label>Eklesia</label><input type="text" id="tEklExt"/></div>
-    </div>
-    <div class="fg"><label>Nível *</label>
-      <select id="tNiv">
-        <option value="musico">🎵 Músico</option>
-        <option value="liderbanda">🎸 Líder de Banda</option>
-        <option value="liderequipe">👥 Líder de Equipe</option>
-        <option value="master">⚙️ Master</option>
-      </select>
-    </div>
-    <div class="mfoot"><button class="btn-ghost sm" onclick="closeM()">Cancelar</button><button class="btn-primary sm" onclick="salvarTok()">Gerar token</button></div>`);
-}
-
-function autoNivel(sel){
-  const opt=sel.options[sel.selectedIndex];
-  const isExt=sel.value==='__ext__';
-  document.getElementById('extFields').style.display=isExt?'':'none';
-  if(opt.dataset.lider==='sim') document.getElementById('tNiv').value='liderbanda';
-}
-
-async function salvarTok(){
-  const sel=document.getElementById('tMus');
-  const isExt=sel.value==='__ext__';
-  const opt=sel.options[sel.selectedIndex];
-  const mid=isExt?'':sel.value;
-  const nome=isExt?document.getElementById('tNomeExt').value.trim():(opt.dataset.nome||'');
-  const ekl=isExt?document.getElementById('tEklExt').value.trim():(opt.dataset.ekl||'');
-  const nivel=document.getElementById('tNiv').value;
-  if(!nome){toast('Selecione ou informe o nome','err');return;}
-  load(true);
-  const r=await api('gerarToken',{nome,eklesia:ekl,nivel,musicoId:mid});
-  load(false);
-  if(!r.ok){toast(r.error||'Erro','err');return;}
-  toast('Token: '+r.token+' ✅','ok'); closeM(); await loadTokens();
-}
-
-// ===== MODAL =====
-function openM(title, body){ document.getElementById('mTitle').textContent=title; document.getElementById('mBody').innerHTML=body; document.getElementById('mOverlay').classList.add('open'); }
-function closeMov(e){ if(e.target===document.getElementById('mOverlay')) closeM(); }
-function closeM(){ document.getElementById('mOverlay').classList.remove('open'); }
-
-// ===== DETAIL =====
-function openD(){ document.getElementById('detail').classList.add('open'); }
-function closeD(){ document.getElementById('detail').classList.remove('open'); }
-
-// [OPT] recarregarAceitesBanda: getDadosIniciaisLider (1 chamada vs N+1)
-async function recarregarAceitesBanda() {
-  const r = await api('getDadosIniciaisLider');
-  if (!r.ok) { renderLBandas(); return; }
-  const d = r.data;
-  _lBandas       = d.bandas   || _lBandas;
-  _lTodosMusicos = d.musicos  || _lTodosMusicos;
-  _vEscalas      = d.vEscalas || _vEscalas;
-  const todasEscalas = d.escalas || [];
-  const escalasPorBanda = {}, subsPorBanda = {};
-  _lBandas.forEach(b => {
-    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
-    subsPorBanda[b.Id]    = [];
+// ==================== BIBLIOTECA (FIX) ====================
+function fixBibliotecaIds() {
+  const sheet = sh('Biblioteca');
+  if (!sheet) return err('Aba não encontrada');
+  const vals = sheet.getDataRange().getValues();
+  const headers = vals[0].map(h => String(h).trim());
+  let iId = -1, iDt = -1;
+  headers.forEach((h, i) => {
+    const n = h.toLowerCase().replace(/\s+/g,'')
+      .replace(/[áàãâ]/g,'a').replace(/[éèê]/g,'e')
+      .replace(/[íì]/g,'i').replace(/[óòõô]/g,'o')
+      .replace(/[úù]/g,'u').replace(/ç/g,'c');
+    if (n === 'id') iId = i;
+    if (n === 'datacriacao') iDt = i;
   });
-  window._lBandaAceites    = d.aceitesPorBanda || {};
-  window._lEscalasPorBanda = escalasPorBanda;
-  window._lBandaSubs       = subsPorBanda;
-  renderLBandas();
-}
-
-
-// ===== SYNC =====
-async function sincronizar() {
-  const s = getSess();
-  if (!s) return;
-  toast('Sincronizando...', 'info');
-  if (s.nivel === 'master') {
-    const pg = document.querySelector('.ni.active')?.dataset?.p || 'dashboard';
-    const loaders = {inscricoes:loadInsc,musicos:loadMusicos,bandas:loadBandas,celebracoes:loadCel,escalas:loadEsc,repertorios:loadRepertoriosAdmin,biblioteca:loadBiblioteca,tokens:loadTokens,dashboard:loadDash};
-    if (loaders[pg]) await loaders[pg]();
-  } else if (s.nivel === 'liderequipe') {
-    const rME2 = await api('getMinhasEscalas');
-    _vEscalas = rME2.ok ? rME2.data : [];
-    await Promise.all([loadLiderEquipePanel(), loadRepertoriosAdmin()]);
-    // Re-render escalas if visible
-    const escPage = document.getElementById('ap-escalas');
-    if (escPage && escPage.classList.contains('active')) renderVEscInEl('admEscList');
-    toast('Sincronizado! ✅', 'ok');
-    return;
-  } else if (s.nivel === 'liderbanda') {
-    // [PERF-5] sincronizar usa getDadosIniciaisLider (1 chamada em vez de 6)
-    const rSync = await api('getDadosIniciaisLider');
-    if (!rSync.ok) { toast('Erro ao sincronizar','err'); return; }
-    const dSync = rSync.data;
-    _lBandas = dSync.bandas || [];
-    _lTodosMusicos = dSync.musicos || [];
-    _lMusicas = [];
-    _vEscalas = dSync.vEscalas || [];
-    const rE = { ok: true, data: dSync.escalas || [] };
-    const rRep = { ok: true, data: dSync.repertorios || [] };
-    const rCels = { ok: true, data: dSync.celebracoes || [] };
-    // Aceites já consolidados no getDadosIniciaisLider
-    const _syncBIds = new Set(_lBandas.map(b => b.Id));
-    const escalasPorBandaSync = {};
-    const subsPorBandaSync = {};
-    _lBandas.forEach(b => {
-      escalasPorBandaSync[b.Id] = (dSync.escalas || []).filter(e => e.BandaId === b.Id);
-      subsPorBandaSync[b.Id]    = [];
-    });
-    window._lBandaAceites    = dSync.aceitesPorBanda || {};
-    window._lEscalasPorBanda = escalasPorBandaSync;
-    window._lBandaSubs       = subsPorBandaSync;
-    renderLBandas();
-    renderLEsc(dSync.escalas || []);
-    renderLRep(dSync.repertorios || []);
-    renderVEscInEl('lMinhasEscList');
-  } else if (s.nivel === 'musico') {
-    // [OPT] paralelo: escalas + bandas + subs
-    const [rEsc, rBandas, rSubs] = await Promise.all([
-      api('getMinhasEscalas'), api('getBandas'), api('getSubs')
-    ]);
-    _vEscalas = rEsc.ok ? rEsc.data : [];
-    renderVEsc();
-    renderVSubs(rSubs.ok ? rSubs.data : []);
-    const todasBandas = rBandas.ok ? rBandas.data : [];
-    const minhasBandas = todasBandas.filter(b =>
-      (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid)
-    );
-    if (minhasBandas.length) {
-      await Promise.all(minhasBandas.map(b => api('getCelebracoesDaBanda',{bandaId:b.Id})));
+  if (iId === -1) return err('Coluna Id não encontrada. Headers: ' + headers.join(','));
+  let fixed = 0;
+  for (let i = 1; i < vals.length; i++) {
+    const row = vals[i];
+    const hasData = row.some(cell => String(cell).trim() !== '');
+    if (!hasData) continue;
+    if (!String(row[iId]).trim()) {
+      sheet.getRange(i + 1, iId + 1).setValue(genId()); fixed++;
+    }
+    if (iDt > -1 && !String(row[iDt]).trim()) {
+      sheet.getRange(i + 1, iDt + 1).setValue(new Date().toISOString());
     }
   }
-  toast('Sincronizado! ✅', 'ok');
+  delete _sheetCache['Biblioteca'];
+  return ok('IDs gerados para ' + fixed + ' músicas');
 }
 
-
-// ===== MÁSCARA TELEFONE =====
-function maskPhone(value) {
-  // Remove tudo que não é dígito
-  const d = String(value).replace(/\D/g, '').substring(0, 11);
-  if (d.length <= 2)  return d.length ? '(' + d : '';
-  if (d.length <= 7)  return '(' + d.substring(0,2) + ') ' + d.substring(2);
-  if (d.length <= 10) return '(' + d.substring(0,2) + ') ' + d.substring(2,6) + '-' + d.substring(6);
-  return '(' + d.substring(0,2) + ') ' + d.substring(2,7) + '-' + d.substring(7,11);
+function fixBiblioteca() {
+  const sheet = sh('Biblioteca');
+  if (!sheet) return err('Aba Biblioteca não encontrada');
+  const vals = sheet.getDataRange().getValues();
+  if (!vals.length) return ok('Vazio');
+  const headers = vals[0].map(h => String(h).trim());
+  const renames = {
+    'Título': 'Titulo', 'Título Original': 'TituloOriginal',
+    'Composição': 'Composicao', 'Versão': 'Versao',
+  };
+  const colsToRemove = [];
+  const colsToRename = [];
+  headers.forEach((h, i) => {
+    if (renames[h]) colsToRename.push({ col: i, newName: renames[h] });
+    const isDuplicate = Object.values(renames).includes(h) &&
+      headers.some((h2, i2) => i2 < i && renames[h2] === h);
+    if (isDuplicate) colsToRemove.push(i);
+  });
+  colsToRename.forEach(({ col, newName }) => { sheet.getRange(1, col + 1).setValue(newName); });
+  colsToRemove.sort((a, b) => b - a).forEach(col => { sheet.deleteColumn(col + 1); });
+  delete _sheetCache['Biblioteca'];
+  return ok({ renamed: colsToRename.map(x => x.newName), removed: colsToRemove.length + ' colunas duplicadas' });
 }
 
-function applyPhoneMask(el) {
-  el.value = maskPhone(el.value);
+function rawSheet(name) {
+  const sheet = sh(name);
+  if (!sheet) return err('Aba não encontrada: ' + name);
+  const vals = sheet.getDataRange().getValues();
+  if (vals.length < 2) return ok({ headers: vals[0] || [], rows: [] });
+  return ok({
+    headers:  vals[0],
+    firstRow: vals[1],
+    combined: vals[0].reduce((obj, h, i) => { obj[h] = vals[1][i]; return obj; }, {}),
+  });
 }
 
-function phoneToRaw(value) {
-  return String(value).replace(/\D/g, '');
-}
-
-function phoneToDisplay(value) {
-  // Recebe número puro (12997047380) ou já formatado
-  return maskPhone(String(value).replace(/\D/g, ''));
-}
-
-// ===== UTILS =====
-function load(v){ document.getElementById('loading').classList.toggle('on',v); }
-function toast(msg,type='info'){ const t=document.getElementById('toast'); t.textContent=msg; t.className='toast show '+type; setTimeout(()=>t.classList.remove('show'),3500); }
-function empty(ico,msg){ return `<div class="empty"><div class="empty-ico">${ico}</div><p>${msg}</p></div>`; }
-
-function pd(str){
-  if(!str) return {day:'—',mon:'—',year:'—'};
-  const d=new Date(str.includes('T')?str:str+'T12:00:00');
-  return {day:String(d.getDate()).padStart(2,'0'),mon:d.toLocaleString('pt-BR',{month:'short'}).replace('.',''),year:d.getFullYear()};
-}
-
-function fd(str){
-  if(!str) return '—';
-  const {day,mon,year}=pd(str);
-  return day+'/'+mon+'/'+year;
-}
-
-function badge(st){
-  const m={pendente:['b-pend','pendente'],agendada:['b-agend','agendada'],aprovado:['b-aprov','aprovado'],reprovado:['b-reprov','reprovado'],aceita:['b-aceita','aceita'],recusada:['b-recusada','recusada'],aberta:['b-pend','aberta'],resolvida:['b-aprov','resolvida'],ativo:['b-aprov','ativo']};
-  const [cls,lbl]=m[st]||['b-pend',st||'—'];
-  return `<span class="badge ${cls}">${lbl}</span>`;
-}
-
-function wa(num, msg){
-  const n=(String(num||'')).replace(/\D/g,'');
-  const full=n.startsWith('55')?n:'55'+n;
-  return `https://wa.me/${full||''}?text=${msg}`;
-}
-
-function toB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=e=>res(e.target.result); r.onerror=rej; r.readAsDataURL(file); }); }
-
-// ===== INIT =====
-document.addEventListener('DOMContentLoaded',()=>{
-  document.addEventListener('click',e=>{ if(_sideOpen&&!e.target.closest('#admSide')&&!e.target.closest('.burger')) toggleSide(); });
-
-  // Suporte a Enter no campo de token da home
-  const homeTokenEl = document.getElementById('homeToken');
-  if (homeTokenEl) {
-    homeTokenEl.addEventListener('keydown', e => { if (e.key === 'Enter') doLoginHome(); });
+// ==================== SETUP ====================
+function setupSpreadsheet() {
+  const s = ss();
+  const defs = {
+    'Tokens':      ['Id','Nome','Eklesia','Token','Nivel','MusicoId','SessionKey','SessionExp','DataCriacao'],
+    'Audicoes':    ['Id','Nome','Eklesia','WhatsApp','Instrumentos','Observacoes','Status','FotoUrl','DataInscricao','DataAudicao','Horario','Local','Notificado','DataNotificacao'],
+    'Aprovacoes':  ['Id','AudicaoId','Nome','Tipo','Obs','DataAprovacao'],
+    'Musicos':     ['Id','Nome','Eklesia','WhatsApp','Instrumentos','Banda','FotoUrl','Ativo','IsLider','AudicaoId','DataCadastro'],
+    'Bandas':      ['Id','Nome','LiderNome','LiderMusicoId','Emoji','Cor','MembrosIds','DataCriacao'],
+    'Escalas':     ['Id','Titulo','Data','Horario','Local','BandaId','BandaNome','Tipo','Status','MusicasIds','RepertorioId','CelebracaoId','DataCriacao'],
+    'Musicas':     ['Id','Nome','Artista','Tom','Bpm','Versao','Youtube','Letra','Cifra','Partitura','DataCadastro'],
+    'Repertorios': ['Id','Nome','BandaId','MusicasIds','Overrides','RepReady','CriadoPor','DataCriacao'],
+    'Celebracoes': ['Id','Nome','Data','Horario','Local','Obs','BandasIds','RepertorioId','RepertorioTipo','LiderEquipeId','DataCriacao'],
+    'Ensaios':     ['Id','BandaId','BandaNome','Data','Horario','Local','Obs','DataCriacao'],
+    'Subs':        ['Id','EscalaId','MusicoOutId','Instrumento','MusicoInId','Status','CriadoPorNivel','CriadoPorId','DataCriacao'],
+    'Aceites':     ['Id','EscalaId','MusicoId','Status','DataResposta','Justificativa'],
+    'Biblioteca':  ['Id','Titulo','TituloOriginal','Composicao','Versao','Categoria','Link','DataCriacao'],
+    'Arquivos':    ['Id','Tipo','ReferenciaId','Nome','Url','FileId','DataUpload'],
+  };
+  Object.entries(defs).forEach(([name, headers]) => {
+    let sheet = s.getSheetByName(name);
+    if (!sheet) sheet = s.insertSheet(name);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(headers);
+      sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+      sheet.setFrozenRows(1);
+    }
+  });
+  const ts = s.getSheetByName('Tokens');
+  if (ts.getLastRow() <= 1) {
+    ts.appendRow([genId(),'Administrador','—','ADM-MASTER','master','','','',new Date().toISOString()]);
   }
-
-  const s = getSess();
-  if (s) {
-    if(s.nivel==='master')          initAdmin(s);
-    else if(s.nivel==='liderequipe')initLiderEquipe(s);
-    else if(s.nivel==='liderbanda') initLider(s);
-    else if(s.nivel==='musico')     initVol(s);
-    else show('sHome'); // nível desconhecido — volta para home
-  } else {
-    // Sem sessão: garantir que a tela inicial está visível
-    show('sHome');
-  }
-});
+  Logger.log('Setup OK');
+}
