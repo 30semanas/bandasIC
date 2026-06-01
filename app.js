@@ -63,11 +63,37 @@ function irLogin(title, nivel) {
   window.scrollTo(0, 0);
 }
 
-// showLogin removed - use irLogin instead
 let _loginNivel = 'admin';
 
+// showLogin — chamada pelo botão de Audição no HTML
+function showLogin(title, nivel) {
+  _loginNivel = nivel || 'admin';
+  const el = document.getElementById('loginTitle');
+  if (el) el.textContent = title || 'Acessar';
+  const tok = document.getElementById('iToken');
+  if (tok) tok.value = '';
+  show('sInsc'); // botão de Audição leva para inscrição
+}
+
 // ===== AUTH =====
-// doLogin removed - use doLoginHome instead
+// doLogin — chamado pelo botão Entrar na tela sLogin
+async function doLogin() {
+  const token = (document.getElementById('iToken') || document.getElementById('homeToken'));
+  if (!token) return;
+  const val = token.value.trim();
+  if (!val) { toast('Digite seu token de acesso', 'err'); return; }
+  load(true);
+  const r = await api('login', { token: val });
+  load(false);
+  if (!r.ok) { toast(r.error || 'Token inválido. Verifique e tente novamente.', 'err'); return; }
+  saveSess(r);
+  toast('Bem-vindo, ' + r.nome + '! 🎵', 'ok');
+  if      (r.nivel === 'master')      initAdmin(r);
+  else if (r.nivel === 'liderequipe') initLiderEquipe(r);
+  else if (r.nivel === 'liderbanda')  initLider(r);
+  else if (r.nivel === 'musico')      initVol(r);
+  else toast('Nível desconhecido: ' + r.nivel, 'err');
+}
 
 async function sair(){
   const s = getSess();
