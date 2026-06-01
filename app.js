@@ -148,94 +148,82 @@ async function enviarInscricao(){
 // ===== VOLUNTÁRIO =====
 let _vEscalas=[], _vSubFilter='todas', _vEscFilter='todas';
 
+// [OPT] initVol: chamadas em paralelo (era 4+ sequenciais)
 async function initVol(sess){
   document.getElementById('vNome').textContent = sess.nome;
   document.getElementById('vGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'! 👋';
   document.getElementById('vEkl').textContent = sess.eklesia;
   show('sVol');
   load(true);
-  const [rEsc, rBandas] = await Promise.all([api('getMinhasEscalas'), api('getBandas')]);
+  const [rEsc, rBandas, rSubs] = await Promise.all([
+    api('getMinhasEscalas'), api('getBandas'), api('getSubs')
+  ]);
   load(false);
   _vEscalas = rEsc.ok ? rEsc.data : [];
   renderVEsc();
+  renderVSubs(rSubs.ok ? rSubs.data : []);
 
-  // Banda do voluntário
   const s = getSess();
   const todasBandas = rBandas.ok ? rBandas.data : [];
-  const minhasBandas = todasBandas.filter(b => {
-    const mids = (b.MembrosIds||'').split(',').map(x=>x.trim());
-    return mids.includes(s.mid);
-  });
+  const minhasBandas = todasBandas.filter(b =>
+    (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid)
+  );
 
   const bEl = document.getElementById('vBandaInfo');
-  if (!minhasBandas.length) {
-    bEl.innerHTML = empty('🎸','Sem banda vinculada');
-  } else {
-    // Buscar todos os músicos para resolver nomes dos membros
-    const rTodosMusicos = await api('getMusicos');
-    const todosMusicos = rTodosMusicos.ok ? rTodosMusicos.data : [];
+  if (!minhasBandas.length) { bEl.innerHTML = empty('🎸','Sem banda vinculada'); return; }
 
-    let html = '';
-    for (const banda of minhasBandas) {
-      const membrosIds = (banda.MembrosIds||'').split(',').filter(Boolean);
-      const membros = membrosIds.map(mid => {
-        const mus = todosMusicos.find(x => x.Id === mid);
-        return mus || { Id: mid, Nome: mid, Instrumentos: '' };
-      });
+  const [rTodosMusicos, ...rCelsBandas] = await Promise.all([
+    api('getMusicos'),
+    ...minhasBandas.map(b => api('getCelebracoesDaBanda', { bandaId: b.Id }))
+  ]);
+  const todosMusicos = rTodosMusicos.ok ? rTodosMusicos.data : [];
+  const agora = new Date();
+  let html = '';
 
-      html += `
-      <div class="card" style="margin-bottom:16px">
-        <div class="ch">
-          <span style="font-size:28px">${banda.Emoji||'🎸'}</span>
-          <div style="flex:1">
-            <div class="cn">${banda.Nome||'—'}</div>
-            <div class="cs">Líder: ${banda.LiderNome||'—'} • ${membros.length} integrante(s)</div>
-          </div>
-        </div>
+  for (let bi = 0; bi < minhasBandas.length; bi++) {
+    const banda = minhasBandas[bi];
+    const membros = (banda.MembrosIds||'').split(',').filter(Boolean).map(mid => {
+      const mus = todosMusicos.find(x => x.Id === mid);
+      return mus || { Id: mid, Nome: mid, Instrumentos: '', WhatsApp: '' };
+    });
 
-        <!-- Integrantes -->
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
-          <p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            ${membros.map(mem => {
-              const isMe = mem.Id === s.mid;
-              const waM = String(mem.WhatsApp||'').replace(/\D/g,'');
-            return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:${isMe?'rgba(124,111,247,.12)':'var(--bg3)'};border-radius:8px;${isMe?'border:1px solid var(--accent)':''}">
-                <div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">${(mem.Nome||'?')[0]}</div>
-                <div style="flex:1">
-                  <div style="font-size:13px;font-weight:600">${mem.Nome||'—'} ${isMe?'<span style="font-size:10px;color:var(--accent)">• você</span>':''}</div>
-                  <div style="font-size:11px;color:var(--text3)">${mem.Instrumentos||'—'}</div>
-                  ${waM&&!isMe?`<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 ${phoneToDisplay(waM)}</div>`:''}
-                </div>
-                ${waM&&!isMe?`<a href="https://wa.me/55${waM}" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>`:''}
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-      </div>`;
+    const membrosHtml = membros.map(mem => {
+      const isMe = mem.Id === s.mid;
+      const waM = String(mem.WhatsApp||'').replace(/\D/g,'');
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:'
+        +(isMe?'rgba(124,111,247,.12)':'var(--bg3)')+';border-radius:8px;'+(isMe?'border:1px solid var(--accent)':'')+'">'
+        +'<div class="av" style="width:30px;height:30px;font-size:12px;flex-shrink:0">'+((mem.Nome||'?')[0])+'</div>'
+        +'<div style="flex:1"><div style="font-size:13px;font-weight:600">'+mem.Nome+(isMe?' <span style="font-size:10px;color:var(--accent)">• você</span>':'')+'</div>'
+        +'<div style="font-size:11px;color:var(--text3)">'+(mem.Instrumentos||'—')+'</div>'
+        +(waM&&!isMe?'<div style="font-size:11px;color:var(--text2);margin-top:2px">📱 '+phoneToDisplay(waM)+'</div>':'')
+        +'</div>'
+        +(waM&&!isMe?'<a href="https://wa.me/55'+waM+'" target="_blank" style="background:rgba(37,211,102,.15);border:1px solid #25D366;color:#25D366;border-radius:6px;padding:4px 8px;font-size:12px;text-decoration:none;flex-shrink:0">💬</a>':'')
+        +'</div>';
+    }).join('');
 
-      // Celebrações da banda
-      const rCel = await api('getCelebracoesDaBanda', { bandaId: banda.Id });
-      const cels = rCel.ok ? rCel.data : [];
-      if (cels.length) {
-        html += `<div class="dsec"><h3>PRÓXIMAS CELEBRAÇÕES</h3>`;
-        html += cels.map(cel => {
-          const d = pd(cel.Data||'');
-          return `
-          <div class="card" style="margin-bottom:10px">
-            <div class="cn">${cel.Nome||'—'}</div>
-            <div class="cs">📅 ${d.day}/${d.mon}/${d.year} • ⏰ ${cel.Horario||''} • 📍 ${cel.Local||''}</div>
-          </div>`;
-        }).join('');
-        html += `</div>`;
-      }
+    html += '<div class="card" style="margin-bottom:16px">'
+      +'<div class="ch"><span style="font-size:28px">'+(banda.Emoji||'🎸')+'</span>'
+      +'<div style="flex:1"><div class="cn">'+(banda.Nome||'—')+'</div>'
+      +'<div class="cs">Líder: '+(banda.LiderNome||'—')+' • '+membros.length+' integrante(s)</div></div></div>'
+      +'<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'
+      +'<p style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">INTEGRANTES</p>'
+      +'<div style="display:flex;flex-direction:column;gap:6px">'+membrosHtml+'</div></div></div>';
+
+    const proximas = (rCelsBandas[bi].ok ? rCelsBandas[bi].data : [])
+      .filter(c => { try{ return new Date(c.Data+'T12:00:00') >= agora; }catch(e_){ return true; } })
+      .sort((a,b) => new Date(a.Data||'9999') - new Date(b.Data||'9999'))
+      .slice(0, 3);
+    if (proximas.length) {
+      html += '<div class="dsec"><h3>PRÓXIMAS CELEBRAÇÕES</h3>'
+        + proximas.map(cel => {
+            const d = pd(cel.Data||'');
+            return '<div class="card" style="margin-bottom:10px"><div class="cn">'+(cel.Nome||'—')+'</div>'
+              +'<div class="cs">📅 '+d.day+'/'+d.mon+'/'+d.year+' • ⏰ '+(cel.Horario||'')+' • 📍 '+(cel.Local||'')+'</div></div>';
+          }).join('')
+        + '</div>';
     }
-    bEl.innerHTML = html;
   }
-
-  // Subs
-  const rSubs = await api('getSubs');
-  renderVSubs(rSubs.ok ? rSubs.data : []);
+  bEl.innerHTML = html;
 }
 
 function detMusVoluntario(id, nome, tom, bpm, youtube) {
@@ -629,8 +617,22 @@ async function salvarRepLider(repId, liberar) {
     toast('Rascunho salvo!','ok');
   }
   closeM();
-  const rRep = await api('getRepertorios',{});
-  renderLRep(rRep.ok ? rRep.data : []);
+  // [OPT] Recarregar dados completos após salvar rep
+  const rSync = await api('getDadosIniciaisLider');
+  if (rSync.ok) {
+    _lBandas = rSync.data.bandas || _lBandas;
+    _vEscalas = rSync.data.vEscalas || _vEscalas;
+    const todasEsc2 = rSync.data.escalas || [];
+    const escsPorBanda2 = {};
+    _lBandas.forEach(b => { escsPorBanda2[b.Id] = todasEsc2.filter(e => e.BandaId === b.Id); });
+    window._lBandaAceites    = rSync.data.aceitesPorBanda || {};
+    window._lEscalasPorBanda = escsPorBanda2;
+    renderLBandas();
+    renderLRep(rSync.data.repertorios || []);
+  } else {
+    const rRep = await api('getRepertorios',{});
+    renderLRep(rRep.ok ? rRep.data : []);
+  }
 }
 
 
@@ -996,8 +998,8 @@ async function salvarMus(){
   load(false);
   if(!r.ok){toast(r.error||'Erro','err');return;}
   toast('Música adicionada! 🎵','ok'); closeM();
-  const rM=await api('getMusicas'); _lMusicas=rM.ok?rM.data:[]; renderLMus();
-  const rM2=await api('getMusicas'); renderAMusicas(rM2.ok?rM2.data:[]);
+  // [OPT] getMusicas 1x apenas (era 2x)
+  const rM=await api('getMusicas'); _lMusicas=rM.ok?rM.data:[]; renderLMus(); renderAMusicas(_lMusicas);
 }
 
 function modalPedirSub(escId, musicoOutId, instrumento) {
@@ -1053,6 +1055,8 @@ async function initLiderEquipe(sess) {
   document.getElementById('admAv').textContent = sess.nome[0]||'L';
   document.getElementById('admTopAv').textContent = sess.nome[0]||'L';
   document.getElementById('admGreet').textContent = 'Olá, '+sess.nome.split(' ')[0]+'!';
+  const tagEl2 = document.getElementById('admNivelTag');
+  if (tagEl2) tagEl2.textContent = 'Líder de Equipe';
   show('sAdm');
 
   // Esconder menus que lider de equipe não acessa
@@ -1206,6 +1210,8 @@ async function initAdmin(sess){
   document.getElementById('admAv').textContent=sess.nome[0]||'A';
   document.getElementById('admTopAv').textContent=sess.nome[0]||'A';
   document.getElementById('admGreet').textContent='Bem-vindo, '+sess.nome.split(' ')[0]+'!';
+  const tagEl = document.getElementById('admNivelTag');
+  if (tagEl) tagEl.textContent = 'Administrador';
   show('sAdm');
   await loadDash();
 }
@@ -2751,22 +2757,21 @@ function closeM(){ document.getElementById('mOverlay').classList.remove('open');
 function openD(){ document.getElementById('detail').classList.add('open'); }
 function closeD(){ document.getElementById('detail').classList.remove('open'); }
 
-// Recarrega aceites das bandas do líder e re-renderiza
+// [OPT] recarregarAceitesBanda: getDadosIniciaisLider (1 chamada vs N+1)
 async function recarregarAceitesBanda() {
-  const rEsc = await api('getEscalas');
-  const todasEscalas = rEsc.ok ? rEsc.data : [];
-  const aceiteData    = {};
-  const escalasPorBanda = {};
-  const subsPorBanda  = {};
-  if (_lBandas.length) {
-    const acResults = await Promise.all(_lBandas.map(b => api('getAceitesDaBanda', { bandaId: b.Id })));
-    _lBandas.forEach((b, i) => {
-      aceiteData[b.Id]      = acResults[i].ok ? acResults[i].data : {};
-      escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
-      subsPorBanda[b.Id]    = [];
-    });
-  }
-  window._lBandaAceites    = aceiteData;
+  const r = await api('getDadosIniciaisLider');
+  if (!r.ok) { renderLBandas(); return; }
+  const d = r.data;
+  _lBandas       = d.bandas   || _lBandas;
+  _lTodosMusicos = d.musicos  || _lTodosMusicos;
+  _vEscalas      = d.vEscalas || _vEscalas;
+  const todasEscalas = d.escalas || [];
+  const escalasPorBanda = {}, subsPorBanda = {};
+  _lBandas.forEach(b => {
+    escalasPorBanda[b.Id] = todasEscalas.filter(e => e.BandaId === b.Id);
+    subsPorBanda[b.Id]    = [];
+  });
+  window._lBandaAceites    = d.aceitesPorBanda || {};
   window._lEscalasPorBanda = escalasPorBanda;
   window._lBandaSubs       = subsPorBanda;
   renderLBandas();
@@ -2819,18 +2824,19 @@ async function sincronizar() {
     renderLRep(dSync.repertorios || []);
     renderVEscInEl('lMinhasEscList');
   } else if (s.nivel === 'musico') {
-    const rEsc = await api('getMinhasEscalas');
+    // [OPT] paralelo: escalas + bandas + subs
+    const [rEsc, rBandas, rSubs] = await Promise.all([
+      api('getMinhasEscalas'), api('getBandas'), api('getSubs')
+    ]);
     _vEscalas = rEsc.ok ? rEsc.data : [];
     renderVEsc();
-    const rBandas = await api('getBandas');
-    const minhasBandas = (rBandas.ok ? rBandas.data : []).filter(b => {
-      return (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid);
-    });
+    renderVSubs(rSubs.ok ? rSubs.data : []);
+    const todasBandas = rBandas.ok ? rBandas.data : [];
+    const minhasBandas = todasBandas.filter(b =>
+      (b.MembrosIds||'').split(',').map(x=>x.trim()).includes(s.mid)
+    );
     if (minhasBandas.length) {
-      for (const banda of minhasBandas) {
-        const rCel = await api('getCelebracoesDaBanda',{bandaId:banda.Id});
-        // refresh banda info
-      }
+      await Promise.all(minhasBandas.map(b => api('getCelebracoesDaBanda',{bandaId:b.Id})));
     }
   }
   toast('Sincronizado! ✅', 'ok');
