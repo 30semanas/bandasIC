@@ -275,26 +275,6 @@
 <div id="toast" class="toast"></div>
 <div id="loading" class="loading"><div class="spin"></div></div>
 
-<script>
-// Cache buster: carrega app.js com versionamento por ETag
-(function() {
-  var CACHE_KEY = 'bic_app_v3';
-  function loadScript(ver) {
-    var s = document.createElement('script');
-    s.src = 'app.js?v=' + ver;
-    s.onerror = function() { console.error('Erro ao carregar app.js'); };
-    document.body.appendChild(s);
-  }
-  fetch('app.js', { method: 'HEAD', cache: 'no-store' })
-    .then(function(r) {
-      var etag = r.headers.get('etag') || r.headers.get('last-modified') || Date.now();
-      var stored = localStorage.getItem(CACHE_KEY);
-      var ver = String(etag).replace(/[^a-zA-Z0-9]/g,'').substring(0,20) || Date.now();
-      localStorage.setItem(CACHE_KEY, String(etag));
-      loadScript(ver);
-    })
-    .catch(function() { loadScript(Date.now()); });
-})();
-</script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
