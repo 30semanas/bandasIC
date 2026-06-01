@@ -2868,11 +2868,22 @@ function toB64(file){ return new Promise((res,rej)=>{ const r=new FileReader(); 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('click',e=>{ if(_sideOpen&&!e.target.closest('#admSide')&&!e.target.closest('.burger')) toggleSide(); });
-  const s=getSess();
-  if(s){
+
+  // Suporte a Enter no campo de token da home
+  const homeTokenEl = document.getElementById('homeToken');
+  if (homeTokenEl) {
+    homeTokenEl.addEventListener('keydown', e => { if (e.key === 'Enter') doLoginHome(); });
+  }
+
+  const s = getSess();
+  if (s) {
     if(s.nivel==='master')          initAdmin(s);
     else if(s.nivel==='liderequipe')initLiderEquipe(s);
     else if(s.nivel==='liderbanda') initLider(s);
     else if(s.nivel==='musico')     initVol(s);
+    else show('sHome'); // nível desconhecido — volta para home
+  } else {
+    // Sem sessão: garantir que a tela inicial está visível
+    show('sHome');
   }
 });
