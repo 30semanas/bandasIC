@@ -1167,11 +1167,12 @@ function renderLiderEquipePanel() {
                 <div style="font-size:11px;color:var(--text3)">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
               </div>
               <div style="display:flex;gap:6px;font-size:11px">
-                ${leRepLiberado ? \`
-                  <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ \${aceitaram}</span>
-                  <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ \${recusaram}</span>
-                  <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ \${pendentes}</span>
-                \` : \`<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>\`}
+                ${leRepLiberado
+                  ? '<span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ '+aceitaram+'</span>'
+                    +'<span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ '+recusaram+'</span>'
+                    +'<span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ '+pendentes+'</span>'
+                  : '<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>'
+                }
               </div>
             </div>
 
