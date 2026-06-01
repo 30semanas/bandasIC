@@ -1081,14 +1081,23 @@ function renderLiderEquipePanel() {
     const podeRep = cel.podeDefinirRepertorio;
 
     // Mapa aceites: musicoId -> {status, justificativa}
+    // FIX1: só incluir aceites de escalas com rep liberado (repReady=true)
     const aceiteMap = {};
+    let leRepLiberado = false;
+    let leRepPendente = false;
     (cel.escalas||[]).forEach(esc => {
-      (esc.aceites||[]).forEach(a => {
-        aceiteMap[String(a.MusicoId)] = {
-          status: (a.Status||'pendente').toLowerCase(),
-          justificativa: a.Justificativa||''
-        };
-      });
+      if (esc.repReady) {
+        leRepLiberado = true;
+        (esc.aceites||[]).forEach(a => {
+          // último registro ganha (deduplicação já feita no backend)
+          aceiteMap[String(a.MusicoId)] = {
+            status: (a.Status||'pendente').toLowerCase(),
+            justificativa: a.Justificativa||''
+          };
+        });
+      } else {
+        leRepPendente = true;
+      }
     });
 
     const temBanda = cel.bandas && cel.bandas.length > 0;
@@ -1115,9 +1124,9 @@ function renderLiderEquipePanel() {
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         ${cel.bandas.map(b => {
           const membros = b.membros || [];
-          const aceitaram = membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'aceita').length;
-          const recusaram = membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'recusada').length;
-          const pendentes = membros.length - aceitaram - recusaram;
+          const aceitaram = leRepLiberado ? membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'aceita').length : 0;
+          const recusaram = leRepLiberado ? membros.filter(mem => (aceiteMap[mem.Id]?.status) === 'recusada').length : 0;
+          const pendentes = leRepLiberado ? (membros.length - aceitaram - recusaram) : membros.length;
           return `
           <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:10px">
             <!-- Cabeçalho Banda -->
@@ -1128,16 +1137,19 @@ function renderLiderEquipePanel() {
                 <div style="font-size:11px;color:var(--text3)">Líder: ${b.LiderNome||'—'} • ${membros.length} integrante(s)</div>
               </div>
               <div style="display:flex;gap:6px;font-size:11px">
-                <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ ${aceitaram}</span>
-                <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ ${recusaram}</span>
-                <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ ${pendentes}</span>
+                ${leRepLiberado ? \`
+                  <span style="background:rgba(52,211,153,.2);color:var(--green);border-radius:6px;padding:3px 8px">✅ \${aceitaram}</span>
+                  <span style="background:rgba(248,113,113,.2);color:var(--red);border-radius:6px;padding:3px 8px">❌ \${recusaram}</span>
+                  <span style="background:rgba(251,191,36,.2);color:#FBBF24;border-radius:6px;padding:3px 8px">⏳ \${pendentes}</span>
+                \` : \`<span style="font-size:11px;color:var(--yellow)">⏳ Rep. pendente</span>\`}
               </div>
             </div>
 
             <!-- Lista de Músicos -->
             <div style="display:flex;flex-direction:column;gap:6px">
               ${membros.length ? membros.map(mem => {
-                const aceite = aceiteMap[String(mem.Id)] || { status: 'pendente' };
+                // FIX1: só mostrar status real se rep liberado
+                const aceite = leRepLiberado ? (aceiteMap[String(mem.Id)] || { status: 'pendente' }) : { status: 'pendente' };
                 const st = aceite.status;
                 const stColor = st==='aceita'?'var(--green)':st==='recusada'?'var(--red)':'#FBBF24';
                 const stIcon  = st==='aceita'?'✅':st==='recusada'?'❌':'⏳';
